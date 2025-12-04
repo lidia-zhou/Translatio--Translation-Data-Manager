@@ -1,0 +1,85 @@
+import { BibEntry, Gender } from "./types";
+
+export const MOCK_DATA: BibEntry[] = [
+    {
+        id: "1",
+        title: "The Second Sex",
+        originalTitle: "Le Deuxième Sexe",
+        publicationYear: 1953,
+        originalPublicationYear: 1949,
+        author: { name: "Simone de Beauvoir", gender: Gender.FEMALE, nationality: "French", birthYear: 1908, deathYear: 1986 },
+        translator: { name: "H. M. Parshley", gender: Gender.MALE, nationality: "American" },
+        publisher: "Alfred A. Knopf",
+        city: "New York",
+        sourceLanguage: "French",
+        targetLanguage: "English",
+        tags: ["philosophy", "feminism"]
+    },
+    {
+        id: "2",
+        title: "One Hundred Years of Solitude",
+        originalTitle: "Cien años de soledad",
+        publicationYear: 1970,
+        originalPublicationYear: 1967,
+        author: { name: "Gabriel García Márquez", gender: Gender.MALE, nationality: "Colombian" },
+        translator: { name: "Gregory Rabassa", gender: Gender.MALE, nationality: "American" },
+        publisher: "Harper & Row",
+        city: "New York",
+        sourceLanguage: "Spanish",
+        targetLanguage: "English",
+        tags: ["fiction", "magic realism"]
+    },
+    {
+        id: "3",
+        title: "Hopscotch",
+        originalTitle: "Rayuela",
+        publicationYear: 1966,
+        originalPublicationYear: 1963,
+        author: { name: "Julio Cortázar", gender: Gender.MALE, nationality: "Argentine" },
+        translator: { name: "Gregory Rabassa", gender: Gender.MALE, nationality: "American" },
+        publisher: "Pantheon Books",
+        sourceLanguage: "Spanish",
+        targetLanguage: "English",
+        tags: ["novel", "experimental"]
+    },
+    {
+        id: "4",
+        title: "Swann's Way",
+        originalTitle: "Du côté de chez Swann",
+        publicationYear: 1922,
+        originalPublicationYear: 1913,
+        author: { name: "Marcel Proust", gender: Gender.MALE, nationality: "French" },
+        translator: { name: "C. K. Scott Moncrieff", gender: Gender.MALE, nationality: "Scottish" },
+        publisher: "Chatto & Windus",
+        city: "London",
+        sourceLanguage: "French",
+        targetLanguage: "English",
+        tags: ["novel", "modernism"]
+    },
+     {
+        id: "5",
+        title: "The Stranger",
+        originalTitle: "L'Étranger",
+        publicationYear: 1946,
+        originalPublicationYear: 1942,
+        author: { name: "Albert Camus", gender: Gender.MALE, nationality: "French" },
+        translator: { name: "Stuart Gilbert", gender: Gender.MALE, nationality: "British" },
+        publisher: "Alfred A. Knopf",
+        sourceLanguage: "French",
+        targetLanguage: "English",
+        tags: ["philosophy", "fiction"]
+    },
+    {
+        id: "6",
+        title: "Memoirs of Hadrian",
+        originalTitle: "Mémoires d'Hadrien",
+        publicationYear: 1954,
+        originalPublicationYear: 1951,
+        author: { name: "Marguerite Yourcenar", gender: Gender.FEMALE, nationality: "French" },
+        translator: { name: "Grace Frick", gender: Gender.FEMALE, nationality: "American" },
+        publisher: "Farrar, Straus and Young",
+        sourceLanguage: "French",
+        targetLanguage: "English",
+        tags: ["historical fiction"]
+    }
+];
