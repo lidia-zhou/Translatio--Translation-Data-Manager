@@ -1,150 +1,147 @@
 
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { BibEntry } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, AreaChart, Area } from 'recharts';
 
-// Added onGenerateInsights and isAnalyzing props definitions to the interface to satisfy App.tsx usage
 interface StatsDashboardProps {
   data: BibEntry[];
   insights: string;
   onGenerateInsights: () => void;
   isAnalyzing: boolean;
+  customColumns: string[];
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+const COLORS = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899'];
 
-// Updated component to use all props and added missing default export
-const StatsDashboard: React.FC<StatsDashboardProps> = ({ data, insights, onGenerateInsights, isAnalyzing }) => {
-    
-    // Process Data for Publication Years
-    const yearCounts = data.reduce((acc, curr) => {
-        acc[curr.publicationYear] = (acc[curr.publicationYear] || 0) + 1;
-        return acc;
-    }, {} as Record<number, number>);
-    
-    const yearData = Object.keys(yearCounts).map(year => ({
-        year: year,
-        count: yearCounts[parseInt(year)]
-    })).sort((a, b) => parseInt(a.year) - parseInt(b.year));
+const StatsDashboard: React.FC<StatsDashboardProps> = ({ data, insights, onGenerateInsights, isAnalyzing, customColumns }) => {
+    const [selectedDimension, setSelectedDimension] = useState<string>('city');
 
-    // Process Data for Translator Gender
-    const genderCounts = data.reduce((acc, curr) => {
-        const g = curr.translator.gender || 'Unknown';
-        acc[g] = (acc[g] || 0) + 1;
-        return acc;
-    }, {} as Record<string, number>);
+    const dimensionOptions = useMemo(() => [
+        { key: 'authorName', label: 'Author / 作者' },
+        { key: 'translatorName', label: 'Translator / 译者' },
+        { key: 'city', label: 'City / 城市' },
+        { key: 'publisher', label: 'Publisher / 出版社' },
+        ...customColumns.map(c => ({ key: `custom:${c}`, label: c }))
+    ], [customColumns]);
 
-    const genderData = Object.keys(genderCounts).map(g => ({
-        name: g,
-        value: genderCounts[g]
-    }));
+    const categoricalData = useMemo(() => {
+        const counts: Record<string, number> = {};
+        data.forEach(e => {
+            let val = '';
+            if (selectedDimension === 'authorName') val = e.author.name;
+            else if (selectedDimension === 'translatorName') val = e.translator.name;
+            else if (selectedDimension === 'city') val = e.city || 'Unknown';
+            else if (selectedDimension === 'publisher') val = e.publisher || 'Unknown';
+            else if (selectedDimension.startsWith('custom:')) val = e.customMetadata?.[selectedDimension.split(':')[1]] || 'N/A';
+            
+            if (val) counts[val] = (counts[val] || 0) + 1;
+        });
+        return Object.keys(counts).map(k => ({ name: k, count: counts[k] })).sort((a,b) => b.count - a.count).slice(0, 10);
+    }, [data, selectedDimension]);
 
-    // Process Source Languages
-    const langCounts = data.reduce((acc, curr) => {
-        const l = curr.sourceLanguage || 'Unknown';
-        acc[l] = (acc[l] || 0) + 1;
-        return acc;
-    }, {} as Record<string, number>);
-
-    const langData = Object.keys(langCounts).map(l => ({
-        name: l,
-        value: langCounts[l]
-    }));
+    const timeTrendData = useMemo(() => {
+        const counts: Record<number, number> = {};
+        data.forEach(e => { if (e.publicationYear) counts[e.publicationYear] = (counts[e.publicationYear] || 0) + 1; });
+        return Object.keys(counts).map(k => ({ year: parseInt(k), count: counts[k as any] })).sort((a,b) => a.year - b.year);
+    }, [data]);
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
+    <div className="max-w-[1600px] mx-auto p-10 space-y-10 animate-fadeIn bg-slate-50/50 min-h-full">
       
-      {/* AI Insights Panel */}
-      <div className="bg-indigo-900 text-white p-8 rounded-3xl shadow-xl col-span-1 md:col-span-2 flex flex-col md:flex-row items-center gap-8 border border-indigo-800">
-        <div className="flex-1 space-y-4">
-            <h3 className="text-2xl font-bold serif text-indigo-100 flex items-center gap-3">
-                <span className="text-3xl">✨</span>
-                AI Scholarly Interpretations
-            </h3>
-            {insights ? (
-                <div className="text-indigo-50 font-serif italic text-lg leading-relaxed whitespace-pre-wrap">
-                    {insights}
+      {/* AI Academic Report Style */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+        <div className="lg:col-span-2 bg-slate-900 rounded-[3rem] p-16 shadow-2xl relative overflow-hidden border border-slate-800 flex flex-col justify-center min-h-[450px]">
+            <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] -mr-32 -mt-32"></div>
+            <div className="relative z-10 space-y-8">
+                <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-indigo-500/20">✨</div>
+                    <div className="space-y-1">
+                        <h3 className="text-xs font-bold uppercase tracking-[0.4em] text-indigo-400">Computational Humanities Insight</h3>
+                        <p className="text-[10px] text-slate-500 font-mono">ARCHIVAL.REPORT.SCAN_v1.0</p>
+                    </div>
                 </div>
-            ) : (
-                <p className="text-indigo-300 font-serif italic text-lg">
-                    Generate deep academic observations from your corpus data using Gemini.
-                </p>
-            )}
-        </div>
-        <button 
-            onClick={onGenerateInsights}
-            disabled={isAnalyzing || data.length === 0}
-            className="px-10 py-5 bg-white text-indigo-900 rounded-2xl font-bold uppercase text-xs tracking-widest shadow-2xl hover:bg-indigo-50 transition-all disabled:opacity-50 shrink-0"
-        >
-            {isAnalyzing ? "Analyzing Corpus..." : "Generate Insights"}
-        </button>
-      </div>
+                
+                <div className="h-px w-full bg-slate-800"></div>
 
-      {/* Temporal Distribution */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 col-span-1 md:col-span-2">
-        <h3 className="text-lg font-semibold text-slate-800 mb-4">Temporal Distribution (Publication Year)</h3>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={yearData}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="year" />
-              <YAxis allowDecimals={false} />
-              <Tooltip cursor={{fill: '#f1f5f9'}} />
-              <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} name="Publications" />
-            </BarChart>
-          </ResponsiveContainer>
+                {insights ? (
+                    <div className="space-y-6">
+                        <div className="prose prose-invert prose-indigo max-w-none text-indigo-50 /90 font-serif text-2xl italic leading-relaxed border-l-4 border-indigo-500 pl-10">
+                            {insights}
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-6 py-8">
+                         <div className="h-4 w-4/5 bg-slate-800 rounded-full animate-pulse"></div>
+                         <div className="h-4 w-3/5 bg-slate-800 rounded-full animate-pulse delay-75"></div>
+                         <div className="h-4 w-2/3 bg-slate-800 rounded-full animate-pulse delay-150"></div>
+                         <p className="text-indigo-300 font-serif italic text-xl pt-6">The system is ready for synthesized cross-archival analysis. Click to engage models.</p>
+                    </div>
+                )}
+            </div>
         </div>
-      </div>
-
-      {/* Translator Gender Stats */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-        <h3 className="text-lg font-semibold text-slate-800 mb-4">Translator Demographics</h3>
-        <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie
-                        data={genderData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                    >
-                        {genderData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                </PieChart>
-            </ResponsiveContainer>
+        
+        <div className="bg-white rounded-[3rem] p-12 border border-slate-200 shadow-xl flex flex-col justify-between items-center text-center">
+            <div className="space-y-6">
+                <div className="w-24 h-24 bg-slate-50 rounded-[2.5rem] flex items-center justify-center text-4xl mx-auto shadow-inner border border-slate-100">📖</div>
+                <h2 className="text-3xl font-bold serif text-slate-800">Research Synthesis</h2>
+                <p className="text-sm text-slate-500 font-serif leading-relaxed px-6">Identifies socio-cultural patterns in translation flows, agent clusters, and bibliographic shifts.</p>
+            </div>
+            <button onClick={onGenerateInsights} disabled={isAnalyzing || data.length === 0} className={`w-full py-6 rounded-[2.2rem] font-bold uppercase text-xs tracking-widest transition-all shadow-2xl ${isAnalyzing ? 'bg-slate-100 text-slate-400' : 'bg-slate-900 text-white hover:bg-indigo-600 hover:scale-[1.02]'}`}>
+                {isAnalyzing ? "Processing Archives..." : "Generate Analysis Report / 深度分析"}
+            </button>
         </div>
       </div>
 
-      {/* Source Language Stats */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
-        <h3 className="text-lg font-semibold text-slate-800 mb-4">Source Languages</h3>
-        <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie
-                        data={langData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                    >
-                        {langData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                        ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                </PieChart>
-            </ResponsiveContainer>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
+        {/* Trend Area Chart */}
+        <div className="bg-white rounded-[3rem] p-12 border border-slate-200 shadow-sm flex flex-col h-[500px]">
+            <div className="mb-10">
+                <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Temporal Distribution</h3>
+                <h2 className="text-3xl font-bold serif text-slate-800">Production Velocity / 时间趋势</h2>
+            </div>
+            <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={timeTrendData}>
+                        <defs>
+                            <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                            </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="year" fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
+                        <YAxis fontSize={10} axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
+                        <Tooltip contentStyle={{borderRadius: '24px', border: 'none', boxShadow: '0 20px 50px rgba(0,0,0,0.1)', padding: '16px'}} />
+                        <Area type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={4} fill="url(#areaGradient)" />
+                    </AreaChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+
+        {/* Dynamic Category Chart */}
+        <div className="bg-white rounded-[3rem] p-12 border border-slate-200 shadow-sm flex flex-col h-[500px]">
+            <div className="flex justify-between items-end mb-10">
+                <div>
+                    <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Agent Dynamics</h3>
+                    <h2 className="text-3xl font-bold serif text-slate-800">Frequency Analysis</h2>
+                </div>
+                <select value={selectedDimension} onChange={(e) => setSelectedDimension(e.target.value)} className="bg-slate-50 border-none text-[10px] font-bold uppercase tracking-widest p-4 rounded-2xl outline-none text-indigo-600 shadow-inner font-bold">
+                    {dimensionOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
+                </select>
+            </div>
+            <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={categoricalData} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                        <XAxis type="number" hide />
+                        <YAxis dataKey="name" type="category" width={140} fontSize={11} tick={{fill: '#475569', fontWeight: 700}} axisLine={false} tickLine={false} />
+                        <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '24px', border: 'none', boxShadow: '0 20px 50px rgba(0,0,0,0.1)'}} />
+                        <Bar dataKey="count" radius={[0, 12, 12, 0]} barSize={24}>
+                            {categoricalData.map((_, i) => <Cell key={`c-${i}`} fill={COLORS[i % COLORS.length]} />)}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
         </div>
       </div>
     </div>

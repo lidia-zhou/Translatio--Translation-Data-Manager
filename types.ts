@@ -1,3 +1,4 @@
+
 import { SimulationNodeDatum, SimulationLinkDatum } from 'd3';
 
 export enum Gender {
@@ -7,15 +8,14 @@ export enum Gender {
   UNKNOWN = 'Unknown'
 }
 
-export type LayoutType = 'force' | 'circular' | 'concentric' | 'grid';
+export type LayoutType = 'forceAtlas2' | 'fruchterman' | 'circular';
+export type NodeMetric = 'degree' | 'inDegree' | 'outDegree' | 'betweenness' | 'closeness' | 'eigenvector' | 'pageRank' | 'clustering' | 'modularity';
+export type NodeSizeMetric = NodeMetric | 'uniform';
 
-export interface Person {
-  name: string;
-  gender: Gender;
-  birthYear?: number;
-  deathYear?: number;
-  nationality?: string;
-  affiliation?: string;
+export interface NetworkConfig {
+  selectedNodeAttrs: string[];
+  isDirected: boolean;
+  edgeWeightBy: 'frequency' | 'none';
 }
 
 export interface ResearchBlueprint {
@@ -23,60 +23,72 @@ export interface ResearchBlueprint {
   suggestedSchema: {
     fieldName: string;
     description: string;
-    analyticalUtility: string; // Why this field is needed for data analysis
+    analyticalUtility: string;
     importance: 'Critical' | 'Optional';
   }[];
-  dataCleaningStrategy: string; // How to ensure consistency for this specific project
+  dataCleaningStrategy: string;
+  // 新增深度研究建议字段
+  storageAdvice: string;
+  methodology: string;
+  visualizationStrategy: string;
+  collectionTips: string;
 }
 
-export interface AnalysisReport {
+export interface Project {
   id: string;
-  timestamp: string;
-  title: string;
-  content: string;
+  name: string;
+  lastModified: number;
+  entries: BibEntry[];
+  blueprint: ResearchBlueprint | null;
+  customColumns: string[];
+}
+
+export interface Person {
+  name: string;
+  gender: Gender;
+  nationality?: string;
+  birthYear?: number;
+  deathYear?: number;
 }
 
 export interface BibEntry {
   id: string;
   title: string;
-  originalTitle?: string;
   publicationYear: number;
-  originalPublicationYear?: number;
   author: Person;
   translator: Person;
   publisher: string;
-  originalCity?: string;
   city?: string;
   sourceLanguage: string;
   targetLanguage: string;
-  tags: string[];
-  journalName?: string;
-  volumeIssue?: string;
-  archivalSource?: string;
-  customMetadata?: Record<string, string>;
+  customMetadata?: Record<string, any>;
+  originalTitle?: string;
+  originalPublicationYear?: number;
+  originalCity?: string;
+  tags?: string[];
 }
 
 export interface GraphNode extends SimulationNodeDatum {
   id: string;
-  group: 'author' | 'translator' | 'publisher' | 'journal';
+  group: string;
   name: string;
   val: number;
-  x?: number;
-  y?: number;
-  fx?: number | null;
-  fy?: number | null;
-  inDegree?: number;
-  outDegree?: number;
-  pageRank?: number;
-  betweenness?: number;
-  community?: number;
+  degree: number;
+  inDegree: number;
+  outDegree: number;
+  betweenness: number;
+  closeness: number;
+  eigenvector: number;
+  pageRank: number;
+  clustering: number;
+  modularity: number;
 }
 
 export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   source: string | GraphNode;
   target: string | GraphNode;
+  weight: number;
   label?: string;
-  weight?: number;
 }
 
 export interface AdvancedGraphMetrics {
@@ -84,13 +96,11 @@ export interface AdvancedGraphMetrics {
   edgeCount: number;
   density: number;
   avgDegree: number;
-  diameterEstimate: number;
-  clusteringCoefficient: number;
-  communityCount?: number;
-  topPageRank: GraphNode[];
-  topBetweenness: GraphNode[];
-  mostProductiveTranslators: GraphNode[];
-  mostTranslatedAuthors: GraphNode[];
+  avgPathLength: number;
+  diameter: number;
+  avgClustering: number;
+  modularityScore: number;
+  topNodes: Record<string, { name: string, score: number, type: string }[]>;
 }
 
-export type ViewMode = 'list' | 'stats' | 'network' | 'map' | 'blueprint' | 'reports';
+export type ViewMode = 'list' | 'stats' | 'network' | 'blueprint' | 'map' | 'projects';
