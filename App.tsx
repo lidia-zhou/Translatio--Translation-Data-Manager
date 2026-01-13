@@ -36,7 +36,6 @@ function App() {
   const [statsInsights, setStatsInsights] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -55,12 +54,12 @@ function App() {
     setShowProjectOverlay(false);
   };
 
-  const createNewProject = (name: string = "New Research Project", initialEntries: BibEntry[] = []) => {
+  const createNewProject = (name: string = "New Research Project") => {
     const newProj: Project = {
       id: `proj-${Date.now()}`,
       name,
       lastModified: Date.now(),
-      entries: initialEntries,
+      entries: [],
       blueprint: null,
       customColumns: []
     };
@@ -68,64 +67,8 @@ function App() {
     setActiveProjectId(newProj.id);
     setShowProjectOverlay(false);
     setHasStarted(true);
-    setViewMode('list');
+    setViewMode('blueprint');
     return newProj;
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsImporting(true);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const rawData = XLSX.utils.sheet_to_json(ws) as any[];
-
-        const parsedEntries: BibEntry[] = rawData.map((row, idx) => ({
-          id: `imp-${Date.now()}-${idx}`,
-          title: row.Title || row.title || row['书名'] || 'Untitled',
-          publicationYear: parseInt(row.Year || row.year || row['年份']) || 2024,
-          author: { name: row.Author || row.author || row['著者'] || 'Unknown', gender: Gender.UNKNOWN },
-          translator: { name: row.Translator || row.translator || row['译者'] || 'Unknown', gender: Gender.UNKNOWN },
-          publisher: row.Publisher || row.publisher || row['出版社'] || 'N/A',
-          city: row.City || row.city || row['城市'],
-          originalCity: row.OriginalCity || row.originalCity || row['原产地城市'],
-          sourceLanguage: row.SourceLanguage || row.sourceLanguage || 'N/A',
-          targetLanguage: row.TargetLanguage || row.targetLanguage || 'N/A',
-          tags: row.Tags ? String(row.Tags).split(',') : [],
-          customMetadata: {}
-        }));
-
-        // Geocoding city names for visualization
-        const enrichedEntries = await Promise.all(parsedEntries.map(async (entry) => {
-          if (entry.city || entry.originalCity) {
-            const updates: any = { ...entry.customMetadata };
-            if (entry.city) updates.targetCoord = await geocodeLocation(entry.city);
-            if (entry.originalCity) updates.sourceCoord = await geocodeLocation(entry.originalCity);
-            return { ...entry, customMetadata: updates };
-          }
-          return entry;
-        }));
-
-        if (activeProject) {
-          updateActiveProject({ entries: [...enrichedEntries, ...activeProject.entries] });
-          setViewMode('list');
-        } else {
-          createNewProject(`Imported ${file.name}`, enrichedEntries);
-        }
-      } catch (err) {
-        alert("文件解析失败，请确保文件格式正确（Excel 或 CSV）。");
-      } finally {
-        setIsImporting(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    };
-    reader.readAsBinaryString(file);
   };
 
   const loadSampleProject = () => {
@@ -265,102 +208,63 @@ function App() {
 
   if (!hasStarted) {
     return (
-      <div className="h-screen bg-[#fcfcfd] flex flex-col items-center justify-center p-8 relative overflow-hidden">
-        {/* Dynamic Background */}
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_#f0f4ff,_transparent_40%),radial-gradient(circle_at_bottom_left,_#fdf2f8,_transparent_40%)] z-0"></div>
+      <div className="h-screen bg-white flex flex-col items-center justify-center p-8 relative overflow-hidden">
         <GlobalFlowBackground />
-        
         <div className="relative z-10 max-w-5xl w-full text-center animate-fadeIn space-y-12">
-          {isImporting && (
-            <div className="fixed inset-0 bg-white/60 backdrop-blur-xl z-[1000] flex flex-col items-center justify-center space-y-6">
-                <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-2xl font-bold serif text-slate-800">正在解析书目数据 / Importing Archives...</p>
-            </div>
-          )}
-          
-          <div className="w-24 h-24 bg-slate-900 rounded-[2rem] flex items-center justify-center text-white font-serif font-bold text-5xl shadow-2xl mx-auto mb-10 transform -rotate-3 hover:rotate-0 transition-transform cursor-pointer">T</div>
-          
+          <div className="w-20 h-20 bg-slate-900 rounded-[1.5rem] flex items-center justify-center text-white font-serif font-bold text-4xl shadow-2xl mx-auto mb-8 transform -rotate-3">T</div>
           <div className="space-y-4">
-            <h1 className="text-8xl md:text-9xl font-bold serif text-slate-900 tracking-tighter drop-shadow-sm">TransData</h1>
-            <div className="space-y-2">
-                <p className="text-xl text-slate-600 font-serif italic leading-relaxed font-medium">翻译研究数字实验室：数据采集・分析・流通・可视化</p>
-                <p className="text-sm text-indigo-400 font-serif uppercase tracking-[0.3em] font-bold opacity-80">Specialized Digital Laboratory for Translation Studies</p>
+            <h1 className="text-7xl md:text-8xl font-bold serif text-slate-900 tracking-tighter">TransData</h1>
+            <div className="space-y-1">
+                <p className="text-lg text-slate-600 font-serif italic leading-relaxed">翻译研究数字实验室：数据采集・分析・流通・可视化</p>
+                <p className="text-xs text-slate-400 font-serif uppercase tracking-[0.2em] font-medium">Specialized Digital Laboratory for Translation Studies</p>
             </div>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full mt-16 px-4">
-            {[
-              { 
-                icon: "📐", 
-                title: "AI Architect", 
-                zhTitle: "AI 架构师", 
-                desc: "Assist in defining research perspective and data schema.", 
-                zhDesc: "辅助定义研究视角与数据架构。", 
-                color: "hover:border-indigo-400 hover:bg-indigo-50/30",
-                action: () => createNewProject("AI 研究课题")
-              },
-              { 
-                icon: "📊", 
-                title: "Batch Import", 
-                zhTitle: "批量导入", 
-                desc: "Rapidly import existing bibliographic Excel datasets.", 
-                zhDesc: "快速导入已有书目 Excel 数据集。", 
-                color: "hover:border-emerald-400 hover:bg-emerald-50/30",
-                action: () => fileInputRef.current?.click()
-              },
-              { 
-                icon: "📖", 
-                title: "Sample Lab", 
-                zhTitle: "样本实验室", 
-                desc: "Load DGLAB catalog to experience dynamic analysis.", 
-                zhDesc: "加载 DGLAB 资助名录体验动态分析。", 
-                color: "hover:border-amber-400 hover:bg-amber-50/30",
-                action: loadSampleProject,
-                special: "ring-1 ring-amber-100 ring-offset-4"
-              }
-            ].map((item, idx) => (
-              <button 
-                key={idx}
-                onClick={item.action} 
-                className={`group bg-white/60 backdrop-blur-md p-10 rounded-[3.5rem] border border-white/80 shadow-sm transition-all text-left flex flex-col h-full ${item.color} ${item.special || ''} hover:shadow-2xl hover:-translate-y-1`}
-              >
-                <div className="text-5xl mb-10 transform group-hover:scale-110 transition-transform">{item.icon}</div>
-                <div className="space-y-1 mb-8">
-                  <h3 className="text-2xl font-bold serif text-slate-800 leading-none">{item.title}</h3>
-                  <h3 className="text-sm font-bold serif text-slate-400 italic">{item.zhTitle}</h3>
-                </div>
-                <div className="space-y-3 mt-auto">
-                  <p className="text-[10px] text-slate-500 leading-relaxed uppercase font-black tracking-widest opacity-80">{item.desc}</p>
-                  <p className="text-[11px] text-slate-400 leading-relaxed font-bold tracking-tight opacity-70">{item.zhDesc}</p>
-                </div>
-              </button>
-            ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full mt-16">
+            <button onClick={() => createNewProject("AI 研究课题")} className="group bg-white p-8 rounded-[3rem] border border-slate-100 hover:border-indigo-400 hover:shadow-2xl transition-all text-left flex flex-col">
+              <div className="text-4xl mb-8">📐</div>
+              <div className="space-y-1 mb-6">
+                <h3 className="text-2xl font-bold serif text-slate-800 leading-none">AI Architect</h3>
+                <h3 className="text-sm font-bold serif text-slate-400 italic">AI 架构师</h3>
+              </div>
+              <div className="space-y-3 mt-auto">
+                <p className="text-[10px] text-slate-500 leading-relaxed uppercase font-bold tracking-widest opacity-80">Assist in defining research perspective and data schema.</p>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-bold tracking-widest opacity-60">辅助定义研究视角与数据架构。</p>
+              </div>
+            </button>
+            <button onClick={() => fileInputRef.current?.click()} className="group bg-white p-8 rounded-[3rem] border border-slate-100 hover:border-emerald-400 hover:shadow-2xl transition-all text-left flex flex-col">
+              <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={(e) => {}} />
+              <div className="text-4xl mb-8">📊</div>
+              <div className="space-y-1 mb-6">
+                <h3 className="text-2xl font-bold serif text-slate-800 leading-none">Batch Import</h3>
+                <h3 className="text-sm font-bold serif text-slate-400 italic">批量导入</h3>
+              </div>
+              <div className="space-y-3 mt-auto">
+                <p className="text-[10px] text-slate-500 leading-relaxed uppercase font-bold tracking-widest opacity-80">Rapidly import existing bibliographic Excel datasets.</p>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-bold tracking-widest opacity-60">快速导入已有书目 Excel 数据集。</p>
+              </div>
+            </button>
+            <button onClick={loadSampleProject} className="group bg-white p-8 rounded-[3rem] border border-slate-100 hover:border-amber-400 hover:shadow-2xl transition-all text-left ring-1 ring-amber-100 ring-offset-4 flex flex-col">
+              <div className="text-4xl mb-8">📖</div>
+              <div className="space-y-1 mb-6">
+                <h3 className="text-2xl font-bold serif text-slate-800 leading-none">Sample Lab</h3>
+                <h3 className="text-sm font-bold serif text-slate-400 italic">样本实验室</h3>
+              </div>
+              <div className="space-y-3 mt-auto">
+                <p className="text-[10px] text-slate-500 leading-relaxed uppercase font-bold tracking-widest opacity-80">Load DGLAB catalog to experience dynamic analysis.</p>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-bold tracking-widest opacity-60">加载 DGLAB 资助名录体验动态分析。</p>
+              </div>
+            </button>
           </div>
-
-          <div className="pt-16 flex flex-col items-center gap-12">
-             <div className="flex gap-6">
-                <button onClick={() => setShowProjectOverlay(true)} className="px-10 py-5 bg-slate-900 text-white rounded-[2.5rem] text-[11px] font-black uppercase tracking-widest shadow-2xl flex items-center gap-4 hover:bg-slate-800 hover:scale-105 transition-all">
-                  <span className="text-xl">📁</span>
-                  <span>项目中心 / Project Hub ({projects.length})</span>
-                </button>
-                <button onClick={() => setShowManual(true)} className="px-10 py-5 bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-600 rounded-[2.5rem] text-[11px] font-black uppercase tracking-widest shadow-lg hover:border-indigo-400 hover:bg-indigo-50/50 hover:scale-105 transition-all">
-                  <span className="text-xl">📘</span>
-                  <span>用户手册 / Manual</span>
-                </button>
+          <div className="pt-12 flex flex-col items-center gap-10">
+             <div className="flex gap-4">
+                <button onClick={() => setShowProjectOverlay(true)} className="px-8 py-4 bg-slate-900 text-white rounded-[2rem] text-[10px] font-bold uppercase tracking-widest shadow-2xl flex items-center gap-3 hover:bg-slate-800 transition-all">📁 项目中心 / Project Hub ({projects.length})</button>
+                <button onClick={() => setShowManual(true)} className="px-8 py-4 bg-white border border-slate-200 text-slate-600 rounded-[2rem] text-[10px] font-bold uppercase tracking-widest shadow-sm hover:border-indigo-400 transition-all">📘 用户手册 / Manual</button>
              </div>
-             <div className="space-y-2">
-                <div className="w-12 h-0.5 bg-slate-200 mx-auto"></div>
-                <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-300">@Lidia Zhou Mengyuan 2026</p>
-             </div>
+             <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-300">@Lidia Zhou Mengyuan 2026</p>
           </div>
         </div>
-        
-        {/* Subtle noise overlay for texture */}
-        <div className="absolute inset-0 pointer-events-none opacity-[0.03] bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] z-[5]"></div>
-
         {showProjectOverlay && <ProjectHub />}
         {showManual && <UserManual onClose={() => setShowManual(false)} />}
-        <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
       </div>
     );
   }
@@ -395,21 +299,9 @@ function App() {
               Manual
             </button>
           </nav>
-          <div className="flex gap-2">
-            <button onClick={() => fileInputRef.current?.click()} className="bg-slate-100 text-slate-600 px-6 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-50 shadow-sm transition-all flex items-center gap-2">
-              <span>Import</span>
-            </button>
-            <button onClick={() => setEditingEntry({ id: 'new', title: '', author: {name: '', gender: Gender.UNKNOWN}, translator: {name: '', gender: Gender.UNKNOWN}, publicationYear: 2024, publisher: '', sourceLanguage: '', targetLanguage: '', tags: [], customMetadata: {} })} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-600 shadow-lg transition-all">+ New Entry</button>
-          </div>
+          <button onClick={() => setEditingEntry({ id: 'new', title: '', author: {name: '', gender: Gender.UNKNOWN}, translator: {name: '', gender: Gender.UNKNOWN}, publicationYear: 2024, publisher: '', sourceLanguage: '', targetLanguage: '', tags: [], customMetadata: {} })} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-indigo-600 shadow-lg transition-all">+ New Entry</button>
         </div>
       </header>
-      
-      {isImporting && (
-          <div className="fixed inset-0 bg-white/60 backdrop-blur-xl z-[1000] flex flex-col items-center justify-center space-y-6">
-              <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-2xl font-bold serif text-slate-800">正在同步书目数据 / Syncing Archives...</p>
-          </div>
-      )}
 
       <main className="flex-1 overflow-hidden flex flex-col relative h-full">
         {viewMode === 'blueprint' ? (
@@ -482,7 +374,7 @@ function App() {
                           <th className="p-6">著者 (Author)</th>
                           <th className="p-6">译者 (Translator)</th>
                           <th className="p-6">年份</th>
-                          {activeProject?.customColumns.map(c => <th key={c} className="p-6 text-indigo-50">{c}</th>)}
+                          {activeProject?.customColumns.map(c => <th key={c} className="p-6 text-indigo-500">{c}</th>)}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 font-serif text-base">
@@ -504,7 +396,6 @@ function App() {
 
       {showProjectOverlay && <ProjectHub />}
       {showManual && <UserManual onClose={() => setShowManual(false)} />}
-      <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
 
       {editingEntry && (
           <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-xl z-[500] flex items-center justify-center p-6 animate-fadeIn">

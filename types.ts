@@ -13,14 +13,11 @@ export type NodeMetric = 'degree' | 'inDegree' | 'outDegree' | 'betweenness' | '
 export type NodeSizeMetric = NodeMetric | 'uniform';
 export type ColorMode = 'category' | 'community';
 
-export type EdgeType = 'TRANSLATION' | 'PUBLICATION' | 'COLLABORATION' | 'GEOGRAPHIC' | 'LINGUISTIC' | 'CUSTOM';
-
 export interface NetworkConfig {
   selectedNodeAttrs: string[];
   isDirected: boolean;
   edgeWeightBy: 'frequency' | 'none';
   colorMode: ColorMode;
-  enabledEdgeTypes: EdgeType[];
 }
 
 export interface ResearchBlueprint {
@@ -94,7 +91,6 @@ export interface GraphLink extends SimulationLinkDatum<GraphNode> {
   target: string | GraphNode;
   weight: number;
   label?: string;
-  type: EdgeType;
 }
 
 export interface AdvancedGraphMetrics {
