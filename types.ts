@@ -23,8 +23,17 @@ export interface NetworkConfig {
   enabledEdgeTypes: EdgeType[];
 }
 
+export interface ResearchDimension {
+  dimension: 'Agentive (Who)' | 'Textual (What)' | 'Distributional (Where/When/How)' | 'Discursive (Why)' | 'Reception (So what)';
+  coreQuestion: string;
+  dataSources: string[];
+  dhMethods: string[];
+  relevance: number; // 0-100%
+}
+
 export interface ResearchBlueprint {
   projectScope: string;
+  dimensions: ResearchDimension[];
   suggestedSchema: {
     fieldName: string;
     description: string;

@@ -28,7 +28,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [rankMetric, setRankMetric] = useState<keyof GraphNode>('degree');
   
   const [config, setConfig] = useState<NetworkConfig>({
     selectedNodeAttrs: ['authorName', 'translatorName', 'publisher'], 
@@ -98,7 +97,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
           if (!nodesMap.has(id)) {
             nodesMap.set(id, { 
               id, name: val, group: attr, val: 10,
-              degree: 0, inDegree: 0, outDegree: 0, betweenness: 0, closeness: 0, eigenvector: 0, pageRank: 1, clustering: 0, modularity: 0, community: 0
+              degree: 0, inDegree: 0, outDegree: 0, betweenness: 0, closeness: 0, eigenvector: 0, pageRank: 0, clustering: 0, modularity: 0, community: 0
             });
           }
         }
@@ -126,78 +125,22 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       return { source: parts[0], target: parts[1], weight: obj.weight, type: obj.type };
     });
 
-    // SNA Metrics Calculation
-    const adjacency: Record<string, string[]> = {};
-    nodeList.forEach(n => adjacency[n.id] = []);
+    const nodeToIndex = new Map(nodeList.map((n, i) => [n.id, i]));
     linkList.forEach(l => {
-      const s = typeof l.source === 'string' ? l.source : l.source.id;
-      const t = typeof l.target === 'string' ? l.target : l.target.id;
-      adjacency[s].push(t);
-      if (!config.isDirected) adjacency[t].push(s);
-      
-      const sIdx = nodeList.findIndex(n => n.id === s);
-      const tIdx = nodeList.findIndex(n => n.id === t);
-      if (sIdx !== -1 && tIdx !== -1) {
-        nodeList[sIdx].degree++;
-        nodeList[sIdx].outDegree++;
-        nodeList[tIdx].degree++;
-        nodeList[tIdx].inDegree++;
+      const sId = typeof l.source === 'string' ? l.source : l.source.id;
+      const tId = typeof l.target === 'string' ? l.target : l.target.id;
+      const sIdx = nodeToIndex.get(sId);
+      const tIdx = nodeToIndex.get(tId);
+      if (sIdx !== undefined && tIdx !== undefined) {
+          nodeList[sIdx].outDegree++;
+          nodeList[tIdx].inDegree++;
+          nodeList[sIdx].degree++;
+          nodeList[tIdx].degree++;
       }
     });
-
-    nodeList.forEach(startNode => {
-      const q: [string, number][] = [[startNode.id, 0]];
-      const visited = new Set([startNode.id]);
-      let totalDist = 0;
-      let reachable = 0;
-
-      while(q.length > 0) {
-        const [curr, dist] = q.shift()!;
-        totalDist += dist;
-        if(dist > 0) reachable++;
-        
-        adjacency[curr]?.forEach(next => {
-          if(!visited.has(next)) {
-            visited.add(next);
-            q.push([next, dist + 1]);
-            const nIdx = nodeList.findIndex(x => x.id === next);
-            if(nIdx !== -1) nodeList[nIdx].betweenness += 1;
-          }
-        });
-      }
-      const sIdx = nodeList.findIndex(x => x.id === startNode.id);
-      if(sIdx !== -1 && reachable > 0) nodeList[sIdx].closeness = reachable / totalDist;
-    });
-
-    for(let iter = 0; iter < 10; iter++) {
-      const nextPR: Record<string, number> = {};
-      nodeList.forEach(n => nextPR[n.id] = 0.15 / nodeList.length);
-      nodeList.forEach(n => {
-        const out = adjacency[n.id].length;
-        if(out > 0) {
-          adjacency[n.id].forEach(target => {
-            nextPR[target] += 0.85 * (n.pageRank / out);
-          });
-        } else {
-          nodeList.forEach(other => nextPR[other.id] += 0.85 * (n.pageRank / nodeList.length));
-        }
-      });
-      nodeList.forEach(n => n.pageRank = nextPR[n.id]);
-    }
 
     return { nodes: nodeList, links: linkList };
   }, [data, config]);
-
-  const globalMetrics = useMemo(() => {
-    const n = graphData.nodes.length;
-    const e = graphData.links.length;
-    return {
-      nodeCount: n,
-      edgeCount: e,
-      density: n > 1 ? (config.isDirected ? e / (n * (n-1)) : (2 * e) / (n * (n-1))) : 0,
-      avgDegree: n > 0 ? (2 * e) / n : 0
-    };
-  }, [graphData, config.isDirected]);
 
   useEffect(() => {
     if (!svgRef.current || graphData.nodes.length === 0 || dimensions.width === 0) return;
@@ -213,10 +156,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     const centerY = dimensions.height / 2;
 
     const sim = d3.forceSimulation(graphData.nodes as any)
-        .force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(220))
-        .force("charge", d3.forceManyBody().strength(-2000))
+        .force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(200))
+        .force("charge", d3.forceManyBody().strength(-1500))
         .force("center", d3.forceCenter(centerX, centerY))
-        .force("collide", d3.forceCollide().radius(d => 20 + (d as any).degree * 3 + 20));
+        .force("collide", d3.forceCollide().radius(d => 15 + (d as any).degree * 2.5 + 15));
 
     const link = g.append("g").selectAll("line").data(graphData.links).join("line")
       .attr("stroke", d => EDGE_COLORS[d.type])
@@ -238,9 +181,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
 
     node.append("circle")
       .attr("r", d => getRadius(d))
-      .attr("fill", d => config.colorMode === 'category' ? 
-          CATEGORY_COLORS[availableAttributes.findIndex(a => a.id === d.group) % 10] : 
-          COMMUNITY_COLORS[d.community % 10])
+      .attr("fill", d => CATEGORY_COLORS[availableAttributes.findIndex(a => a.id === d.group) % 10])
       .attr("stroke", "#fff").attr("stroke-width", 3)
       .attr("class", "cursor-pointer hover:stroke-indigo-500 transition-all shadow-xl")
       .on("click", (e, d) => { e.stopPropagation(); setSelectedNode(d); });
@@ -258,68 +199,65 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     });
 
     return () => sim.stop();
-  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels, config.colorMode]);
+  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels]);
+
+  const toggleEdgeType = (type: EdgeType) => {
+    setConfig(prev => ({
+        ...prev,
+        enabledEdgeTypes: prev.enabledEdgeTypes.includes(type) 
+            ? prev.enabledEdgeTypes.filter(t => t !== type)
+            : [...prev.enabledEdgeTypes, type]
+    }));
+  };
 
   return (
     <div ref={containerRef} className="flex-1 w-full h-full bg-[#fdfdfe] relative flex overflow-hidden">
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing"></svg>
       
-      {/* Legend & Summary */}
-      <div className="absolute bottom-12 left-12 flex flex-col gap-6 z-40">
-        <div className="bg-white/90 backdrop-blur-xl p-8 rounded-[2.5rem] border border-slate-100 shadow-2xl space-y-4">
-            <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Global SNA Report / 全局网络报告</h5>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-                <div className="space-y-1">
-                    <p className="text-[9px] uppercase text-slate-400 font-bold">Density / 网络密度</p>
-                    <p className="text-xl font-bold serif text-indigo-600">{(globalMetrics.density * 100).toFixed(2)}%</p>
-                </div>
-                <div className="space-y-1">
-                    <p className="text-[9px] uppercase text-slate-400 font-bold">Avg. Degree / 平均度</p>
-                    <p className="text-xl font-bold serif text-indigo-600">{globalMetrics.avgDegree.toFixed(1)}</p>
-                </div>
-            </div>
-        </div>
-
-        <div className="bg-white/90 backdrop-blur-xl p-8 rounded-[2.5rem] border border-slate-100 shadow-2xl">
-            <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Relationship Types / 关系类型</h5>
-            <div className="flex flex-col gap-3">
-                {(Object.entries(EDGE_COLORS) as [EdgeType, string][]).map(([type, color]) => (
-                    <button key={type} onClick={() => setConfig(prev => ({ ...prev, enabledEdgeTypes: prev.enabledEdgeTypes.includes(type) ? prev.enabledEdgeTypes.filter(t => t !== type) : [...prev.enabledEdgeTypes, type]}))} 
-                            className={`flex items-center gap-4 transition-all hover:scale-105 ${config.enabledEdgeTypes.includes(type) ? 'opacity-100' : 'opacity-20'}`}>
-                        <div className="w-6 h-1.5 rounded-full" style={{ backgroundColor: color }}></div>
-                        <span className="text-[9px] font-bold uppercase tracking-tighter text-slate-600">{type} / {type === 'TRANSLATION' ? '翻译' : type === 'PUBLICATION' ? '出版' : type === 'COLLABORATION' ? '协作' : type === 'GEOGRAPHIC' ? '地理' : type === 'LINGUISTIC' ? '语言' : '自定义'}</span>
-                    </button>
-                ))}
-            </div>
-        </div>
+      {/* Edge Legend */}
+      <div className="absolute bottom-12 left-12 flex flex-col gap-4 bg-white/90 backdrop-blur-xl p-8 rounded-[2.5rem] border border-slate-100 shadow-2xl z-40">
+        <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Relationship Types / 关系界定</h5>
+        {(Object.entries(EDGE_COLORS) as [EdgeType, string][]).map(([type, color]) => (
+            <button key={type} onClick={() => toggleEdgeType(type)} className={`flex items-center gap-4 transition-all hover:scale-105 ${config.enabledEdgeTypes.includes(type) ? 'opacity-100' : 'opacity-20'}`}>
+                <div className="w-8 h-1.5 rounded-full" style={{ backgroundColor: color }}></div>
+                <span className="text-[10px] font-bold uppercase tracking-tighter text-slate-600">{type}</span>
+            </button>
+        ))}
       </div>
 
       {/* Control Panel */}
       <div className={`absolute top-0 right-0 h-full w-[380px] bg-white/95 backdrop-blur-2xl border-l border-slate-100 shadow-2xl transition-transform duration-500 z-50 flex flex-col ${isPanelOpen ? 'translate-x-0' : 'translate-x-full'}`}>
         <div className="flex bg-slate-50/50 border-b border-slate-100 p-2 shrink-0">
-            {[
-                {id:'topology',label:'Topology / 拓扑结构'},
-                {id:'viz',label:'Visualization / 视觉映射'},
-                {id:'sna',label:'SNA Metrics / 社会网络指标'}
-            ].map(t => (
-                <button key={t.id} onClick={() => setActiveTab(t.id as any)} className={`flex-1 py-5 text-[9px] font-black uppercase tracking-widest transition-all rounded-xl ${activeTab === t.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+            {[{id:'topology',label:'Topology'},{id:'viz',label:'Viz'},{id:'sna',label:'Analysis'}].map(t => (
+                <button key={t.id} onClick={() => setActiveTab(t.id as any)} className={`flex-1 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-xl ${activeTab === t.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                     {t.label}
                 </button>
             ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-10 space-y-12 custom-scrollbar pb-32">
+        <div className="flex-1 overflow-y-auto p-10 space-y-12 custom-scrollbar">
             {activeTab === 'topology' && (
                 <div className="space-y-10 animate-fadeIn">
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Node Entities / 节点实体</h4>
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Node Entities / 节点属性</h4>
                         <div className="flex flex-wrap gap-2.5">
                             {availableAttributes.map(attr => (
-                                <button key={attr.id} onClick={() => setConfig({...config, selectedNodeAttrs: config.selectedNodeAttrs.includes(attr.id) ? config.selectedNodeAttrs.filter(x => x !== attr.id) : [...config.selectedNodeAttrs, attr.id]})} 
-                                        className={`px-5 py-2.5 rounded-full text-[11px] font-bold border transition-all ${config.selectedNodeAttrs.includes(attr.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                                <button key={attr.id} onClick={() => {
+                                    const next = config.selectedNodeAttrs.includes(attr.id) ? config.selectedNodeAttrs.filter(x => x !== attr.id) : [...config.selectedNodeAttrs, attr.id];
+                                    setConfig({...config, selectedNodeAttrs: next});
+                                }} className={`px-5 py-2.5 rounded-full text-[11px] font-bold border transition-all ${config.selectedNodeAttrs.includes(attr.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
                                     {attr.label}
                                 </button>
                             ))}
+                        </div>
+                    </section>
+                    <section className="space-y-5">
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Graph Properties / 图谱属性</h4>
+                        <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
+                           <span className="text-[11px] font-bold text-slate-600 uppercase">Directed Graph / 有向图</span>
+                           <button onClick={() => setConfig({...config, isDirected: !config.isDirected})} className={`w-14 h-7 rounded-full transition-colors relative ${config.isDirected ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                              <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${config.isDirected ? 'left-8' : 'left-1'}`}></div>
+                           </button>
                         </div>
                     </section>
                 </div>
@@ -328,13 +266,32 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             {activeTab === 'viz' && (
                 <div className="space-y-10 animate-fadeIn">
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Node Scaling / 节点规模控制</h4>
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Node Scaling / 节点规模</h4>
                         <select value={sizeBy} onChange={e => setSizeBy(e.target.value as any)} className="w-full p-5 bg-slate-50 rounded-[1.5rem] border-none text-[11px] font-bold uppercase outline-none shadow-inner text-indigo-600">
-                           <option value="uniform">Uniform / 统一尺寸</option>
-                           <option value="degree">Degree / 度中心性</option>
-                           <option value="pageRank">PageRank / 影响力指数</option>
-                           <option value="betweenness">Betweenness / 介数中介度</option>
+                           <option value="uniform">Uniform / 统一大小</option>
+                           <option value="degree">Total Degree / 度中心性</option>
+                           <option value="inDegree">In-Degree / 入度</option>
+                           <option value="outDegree">Out-Degree / 出度</option>
                         </select>
+                        <div className="grid grid-cols-2 gap-6">
+                           <div className="space-y-3">
+                              <label className="text-[10px] font-black uppercase text-slate-300">Min Size</label>
+                              <input type="range" min="10" max="40" value={minSize} onChange={e => setMinSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                           </div>
+                           <div className="space-y-3">
+                              <label className="text-[10px] font-black uppercase text-slate-300">Max Size</label>
+                              <input type="range" min="40" max="120" value={maxSize} onChange={e => setMaxSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                           </div>
+                        </div>
+                    </section>
+                    <section className="space-y-5">
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Visual Helpers / 视觉辅助</h4>
+                        <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
+                           <span className="text-[11px] font-bold text-slate-600 uppercase">Show Labels / 显示标签</span>
+                           <button onClick={() => setShowLabels(!showLabels)} className={`w-14 h-7 rounded-full transition-colors relative ${showLabels ? 'bg-indigo-600' : 'bg-slate-300'}`}>
+                              <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${showLabels ? 'left-8' : 'left-1'}`}></div>
+                           </button>
+                        </div>
                     </section>
                 </div>
             )}
@@ -342,26 +299,16 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             {activeTab === 'sna' && (
                 <div className="space-y-10 animate-fadeIn">
                     <section className="space-y-5">
-                        <div className="flex justify-between items-end mb-4">
-                           <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Ranking / 指标排名</h4>
-                           <select value={rankMetric} onChange={e => setRankMetric(e.target.value as any)} className="bg-transparent text-[10px] font-black text-indigo-600 uppercase tracking-widest outline-none border-none cursor-pointer">
-                              <option value="degree">Degree / 按活跃度</option>
-                              <option value="pageRank">PageRank / 按影响力</option>
-                              <option value="betweenness">Betweenness / 按中介度</option>
-                              <option value="closeness">Closeness / 按传播效率</option>
-                           </select>
-                        </div>
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Degree Centrality / 活跃度排名</h4>
                         <div className="space-y-4">
-                           {graphData.nodes.sort((a,b) => (b[rankMetric] as number) - (a[rankMetric] as number)).slice(0, 20).map((n, i) => (
-                              <div key={n.id} onClick={() => setSelectedNode(n)} className="flex items-center gap-5 p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm hover:shadow-md transition-shadow cursor-pointer group">
-                                 <span className="text-sm font-black text-slate-300 group-hover:text-indigo-600">#{i+1}</span>
+                           {graphData.nodes.sort((a,b) => b.degree - a.degree).slice(0, 15).map((n, i) => (
+                              <div key={n.id} className="flex items-center gap-5 p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm hover:shadow-md transition-shadow">
+                                 <span className="text-sm font-black text-slate-300">#{i+1}</span>
                                  <div className="flex-1 min-w-0">
                                     <p className="text-[12px] font-bold text-slate-800 truncate">{n.name}</p>
                                     <p className="text-[10px] uppercase text-indigo-400 font-black tracking-tighter">{n.group}</p>
                                  </div>
-                                 <span className="text-sm font-bold text-slate-400 font-mono">
-                                    {typeof n[rankMetric] === 'number' ? (n[rankMetric] as number).toFixed(2) : '-'}
-                                 </span>
+                                 <span className="text-sm font-bold text-slate-400">{n.degree}</span>
                               </div>
                            ))}
                         </div>
@@ -371,41 +318,22 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         </div>
 
         {selectedNode && (
-            <div className="absolute inset-0 bg-white z-[70] flex flex-col p-10 animate-fadeIn overflow-y-auto">
-                <button onClick={() => setSelectedNode(null)} className="absolute top-10 right-10 text-5xl font-light hover:text-indigo-600 transition-colors leading-none">&times;</button>
-                
-                <div className="mt-12 space-y-12">
-                   <div className="space-y-4">
-                      <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest">{selectedNode.group}</p>
-                      <h3 className="text-5xl font-bold serif text-slate-900 leading-tight">{selectedNode.name}</h3>
-                   </div>
-
-                   <div className="grid grid-cols-2 gap-6">
-                      {[
-                        { label: 'Degree / 活跃度', val: selectedNode.degree, color: 'text-indigo-600' },
-                        { label: 'PageRank / 影响力', val: selectedNode.pageRank.toFixed(4), color: 'text-emerald-600' },
-                        { label: 'Betweenness / 介数', val: selectedNode.betweenness.toFixed(1), color: 'text-rose-600' },
-                        { label: 'Closeness / 亲密度', val: selectedNode.closeness.toFixed(3), color: 'text-amber-600' }
-                      ].map(m => (
-                        <div key={m.label} className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-2">
-                           <p className="text-[9px] uppercase font-black text-slate-400 tracking-widest">{m.label}</p>
-                           <p className={`text-2xl font-bold serif ${m.color}`}>{m.val}</p>
-                        </div>
-                      ))}
-                   </div>
-
-                   <section className="space-y-4">
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 border-b pb-4">Social Role Analysis / 中介角色分析</h4>
-                      <div className="p-8 bg-slate-900 rounded-[3rem] text-white space-y-4 shadow-xl">
-                         <p className="text-xl font-serif italic leading-relaxed opacity-90">
-                            {selectedNode.pageRank > 0.05 ? "该节点是网络中的权力枢纽，主导了学术资本的跨国流动。/ This node is a power hub dominating transnational academic capital flow." : 
-                             selectedNode.betweenness > 50 ? "该节点扮演着跨国连接的‘桥梁’角色，是翻译场域中关键的信息枢纽。/ This node acts as a bridge for transnational connections and a key information hub." : 
-                             "该节点是该研究脉络中的活跃参与者，专注于特定的翻译流转路径。/ This node is an active participant in this research context, focusing on specific translation flows."}
-                         </p>
-                      </div>
-                   </section>
-
-                   <button onClick={() => setSelectedNode(null)} className="w-full py-6 bg-slate-100 text-slate-400 rounded-full font-bold text-[11px] uppercase tracking-widest hover:bg-slate-200 transition-colors">Close Analysis / 关闭详情</button>
+            <div className="m-8 p-10 bg-slate-900 text-white rounded-[3.5rem] shadow-2xl space-y-6 animate-slideUp relative flex-shrink-0 overflow-hidden">
+                <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-500/20 blur-3xl -mr-20 -mt-20"></div>
+                <button onClick={() => setSelectedNode(null)} className="absolute top-8 right-10 text-4xl font-light hover:text-rose-400 transition-colors leading-none z-10">&times;</button>
+                <div className="space-y-2 relative z-10">
+                    <p className="text-[10px] uppercase text-indigo-400 tracking-widest font-black">{selectedNode.group}</p>
+                    <h4 className="text-3xl font-bold serif leading-tight pr-12">{selectedNode.name}</h4>
+                </div>
+                <div className="grid grid-cols-2 gap-4 relative z-10">
+                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center">
+                        <p className="text-[9px] uppercase text-slate-500 mb-2 tracking-widest">Tot. Degree</p>
+                        <p className="text-2xl font-bold serif text-slate-300">{selectedNode.degree}</p>
+                    </div>
+                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center">
+                        <p className="text-[9px] uppercase text-slate-500 mb-2 tracking-widest">Flow (In/Out)</p>
+                        <p className="text-2xl font-bold serif text-emerald-400">{selectedNode.inDegree}/{selectedNode.outDegree}</p>
+                    </div>
                 </div>
             </div>
         )}

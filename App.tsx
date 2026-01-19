@@ -1,17 +1,217 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { BibEntry, ViewMode, Gender, ResearchBlueprint, Project } from './types';
+import { BibEntry, ViewMode, Gender, Project, ResearchBlueprint } from './types';
 import NetworkGraph from './components/NetworkGraph';
 import StatsDashboard from './components/StatsDashboard';
 import WorldMap from './components/WorldMap';
 import GlobalFlowBackground from './components/GlobalFlowBackground';
 import UserManual from './components/UserManual';
-import { generateResearchBlueprint, generateInsights, geocodeLocation } from './services/geminiService';
+import { generateResearchBlueprint, generateInsights } from './services/geminiService';
 import { SAMPLE_ENTRIES } from './constants';
 
-const STORAGE_KEY_PROJECTS = 'transdata_core_v18';
-const STORAGE_KEY_ACTIVE_ID = 'transdata_active_id_v18';
+const STORAGE_KEY_PROJECTS = 'transdata_core_v21';
+const STORAGE_KEY_ACTIVE_ID = 'transdata_active_id_v21';
+
+// Enhanced Service Status with API Key Selection logic
+const ServiceStatus = () => {
+    const hasAPI = !!process.env.API_KEY;
+    
+    const handleSelectKey = async () => {
+        if (typeof window !== 'undefined' && (window as any).aistudio) {
+            await (window as any).aistudio.openSelectKey();
+        }
+    };
+
+    return (
+        <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-md rounded-full border border-white/10">
+                <div className={`w-1.5 h-1.5 rounded-full ${hasAPI ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-white/80">
+                    {hasAPI ? 'AI Engine Active' : 'Template Mode'}
+                </span>
+            </div>
+            <button 
+                onClick={handleSelectKey}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full text-[9px] font-black uppercase tracking-widest shadow-xl transition-all flex items-center gap-1.5 border border-indigo-400/30"
+            >
+                <span>🔑</span>
+                {hasAPI ? 'Switch API Key' : 'Unlock AI Features'}
+            </button>
+        </div>
+    );
+};
+
+const ProjectHubOverlay = ({ projects, setProjects, onEnter, onClose }: { 
+  projects: Project[], 
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>,
+  onEnter: (id: string) => void,
+  onClose: () => void 
+}) => (
+  <div className="fixed inset-0 bg-white/95 backdrop-blur-3xl z-[800] flex flex-col p-12 md:p-24 animate-fadeIn overflow-auto text-slate-900">
+    <div className="max-w-7xl w-full mx-auto space-y-20">
+      <div className="flex justify-between items-end border-b border-slate-100 pb-16">
+        <div className="space-y-4">
+           <h2 className="text-7xl font-bold serif leading-none tracking-tight">Project Hub</h2>
+           <h2 className="text-3xl font-bold serif text-slate-400 italic">项目中心 / Research Management</h2>
+        </div>
+        <button onClick={onClose} className="text-7xl font-light hover:text-indigo-600 transition-transform hover:scale-110 leading-none">&times;</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-12">
+        {projects.map(p => (
+          <div key={p.id} className="p-12 bg-white border border-slate-100 rounded-[3.5rem] shadow-sm hover:shadow-2xl transition-all relative flex flex-col justify-between h-[450px] group ring-1 ring-slate-100 hover:ring-indigo-100">
+            <div className="space-y-8">
+              <div className="w-20 h-20 bg-indigo-50 rounded-3xl flex items-center justify-center text-4xl shadow-sm">📓</div>
+              <div className="space-y-2">
+                  <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Project Title</p>
+                  <input 
+                    className="w-full text-2xl font-bold serif bg-transparent border-none outline-none focus:ring-4 ring-indigo-50 p-3 rounded-2xl" 
+                    value={p.name} 
+                    onChange={(e) => setProjects(prev => prev.map(x => x.id === p.id ? {...x, name: e.target.value} : x))}
+                  />
+              </div>
+              <p className="text-sm text-slate-400 font-mono pl-3">Modified: {new Date(p.lastModified).toLocaleDateString()}</p>
+            </div>
+            <div className="flex flex-col gap-4">
+               <button onClick={() => onEnter(p.id)} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-bold text-sm uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-xl">Enter Lab</button>
+               <button onClick={() => setProjects(prev => prev.filter(x => x.id !== p.id))} className="text-xs font-bold text-rose-400 uppercase tracking-widest hover:text-rose-600 py-2">Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+const TheoryLabInterface = ({ 
+  input, 
+  setInput, 
+  onAnalyze, 
+  result, 
+  isAnalyzing, 
+  onClose 
+}: { 
+  input: string, 
+  setInput: (v: string) => void, 
+  onAnalyze: () => void, 
+  result: ResearchBlueprint | null, 
+  isAnalyzing: boolean, 
+  onClose: () => void 
+}) => (
+  <div className="fixed inset-0 bg-white z-[750] flex flex-col p-12 md:p-24 overflow-auto animate-fadeIn select-text">
+      <div className="max-w-[1600px] w-full mx-auto space-y-16">
+          <div className="flex justify-between items-start border-b border-slate-100 pb-12">
+              <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-slate-900 text-white rounded-2xl flex items-center justify-center text-2xl shadow-lg">🔭</div>
+                      <h1 className="text-6xl font-bold serif text-slate-900 tracking-tight">Theory Lab</h1>
+                  </div>
+                  <p className="text-xl text-slate-500 font-serif italic">Translation as Data: The Five-Dimensional Framework Mapping</p>
+              </div>
+              <div className="flex items-center gap-8">
+                  <div className={`px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest border ${!!process.env.API_KEY ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                      {!!process.env.API_KEY ? '● AI Dynamic Analysis' : '● Expert Template Mode'}
+                  </div>
+                  <button onClick={onClose} className="text-7xl font-light hover:text-indigo-600 transition-transform hover:scale-110 leading-none">&times;</button>
+              </div>
+          </div>
+          
+          <div className="bg-slate-50 p-12 rounded-[3.5rem] border border-slate-100 space-y-8 shadow-inner relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-100/30 blur-3xl -mr-32 -mt-32"></div>
+              <h3 className="text-2xl font-bold serif text-slate-800 relative z-10">Research Inquiry / 研究课题咨询</h3>
+              <textarea 
+                className="w-full h-32 p-8 bg-white rounded-3xl border border-slate-200 outline-none text-xl font-serif shadow-sm focus:ring-4 ring-indigo-50 transition-all relative z-10" 
+                placeholder="Describe your research topic, e.g., 'Modernist poetry translation in 1930s Shanghai'..."
+                value={input}
+                onChange={e => setInput(e.target.value)}
+              />
+              <div className="flex items-center justify-between relative z-10">
+                  <p className="text-xs text-slate-400 font-serif italic max-w-xl">
+                      Based on "Translation as Data" framework, the platform will map your query to specific data requirements and analytical methodologies across 5 dimensions. {!process.env.API_KEY && "(Expert Template Mode Active)"}
+                  </p>
+                  <button 
+                    onClick={onAnalyze}
+                    disabled={isAnalyzing || !input.trim()}
+                    className="px-12 py-6 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-[0.3em] hover:bg-indigo-600 transition-all disabled:opacity-50 shadow-2xl"
+                  >
+                      {isAnalyzing ? "Processing Framework..." : "Get Matrix Analysis →"}
+                  </button>
+              </div>
+          </div>
+
+          {result && (
+              <div className="space-y-10 animate-fadeIn pb-32">
+                  <div className="flex items-center gap-6">
+                      <h2 className="text-3xl font-bold serif text-slate-900">The Framework Matrix</h2>
+                      <div className="h-px flex-1 bg-slate-200"></div>
+                  </div>
+
+                  <div className="space-y-6">
+                      {result.dimensions.map((dim, idx) => (
+                          <div key={idx} className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row group hover:shadow-xl transition-all hover:border-indigo-100 ring-1 ring-slate-100">
+                              <div className="md:w-72 bg-slate-50 p-10 flex flex-col justify-center items-center text-center border-r border-slate-100 shrink-0 group-hover:bg-indigo-50/30 transition-colors">
+                                  <div className="text-5xl mb-6">{idx === 0 ? '👤' : idx === 1 ? '📜' : idx === 2 ? '📍' : idx === 3 ? '💬' : '🗣️'}</div>
+                                  <h4 className="text-xl font-bold serif text-slate-900 leading-tight mb-2">{dim.dimension}</h4>
+                                  <div className="px-4 py-1.5 bg-white rounded-full text-[10px] font-black uppercase tracking-widest text-slate-400 shadow-sm border border-slate-100">Dimension 0{idx+1}</div>
+                              </div>
+                              <div className="flex-1 p-10 grid grid-cols-1 lg:grid-cols-3 gap-12 text-slate-900">
+                                  <div className="space-y-4">
+                                      <h5 className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-500">Ontological Inquiry</h5>
+                                      <p className="text-lg font-serif italic text-slate-700 leading-relaxed border-l-2 border-indigo-100 pl-6">{dim.coreQuestion}</p>
+                                  </div>
+                                  <div className="space-y-4">
+                                      <h5 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Target Data Sources</h5>
+                                      <div className="flex flex-wrap gap-2">
+                                          {dim.dataSources.map(ds => (
+                                              <span key={ds} className="px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-bold text-slate-600 border border-slate-200/50">{ds}</span>
+                                          ))}
+                                      </div>
+                                  </div>
+                                  <div className="space-y-4">
+                                      <h5 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Analytical Methods</h5>
+                                      <div className="flex flex-wrap gap-2">
+                                          {dim.dhMethods.map(m => (
+                                              <span key={m} className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-bold shadow-md">{m}</span>
+                                          ))}
+                                      </div>
+                                  </div>
+                              </div>
+                              <div className="w-2 flex-shrink-0 bg-slate-100 relative">
+                                  <div 
+                                      className="absolute bottom-0 w-full bg-indigo-500 transition-all duration-1000"
+                                      style={{ height: `${dim.relevance}%` }}
+                                  ></div>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+
+                  {/* Summary Area */}
+                  <div className="bg-white p-16 rounded-[4rem] text-slate-900 border border-slate-200 space-y-8 shadow-2xl relative overflow-hidden ring-1 ring-slate-100">
+                      <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-100/20 blur-[120px] -mr-32 -mt-32"></div>
+                      <div className="flex items-center gap-6 relative z-10">
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.5em] text-indigo-500">Methodological Synthesis</h4>
+                          <div className="h-px flex-1 bg-slate-100"></div>
+                      </div>
+                      <p className="text-3xl font-serif italic leading-relaxed text-slate-800 relative z-10">
+                          "{result.methodology}"
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-10 pt-10 relative z-10">
+                          <div className="space-y-4 bg-slate-50 p-8 rounded-[2rem] border border-slate-100 group hover:border-indigo-200 transition-all">
+                              <h6 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Visualization Strategy</h6>
+                              <p className="text-sm text-slate-600 leading-relaxed font-serif">{result.visualizationStrategy}</p>
+                          </div>
+                          <div className="space-y-4 bg-slate-50 p-8 rounded-[2rem] border border-slate-100 group hover:border-indigo-200 transition-all">
+                              <h6 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Collection Protocol</h6>
+                              <p className="text-sm text-slate-600 leading-relaxed font-serif">{result.collectionTips}</p>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
+      </div>
+  </div>
+);
 
 function App() {
   const [projects, setProjects] = useState<Project[]>(() => {
@@ -23,19 +223,20 @@ function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY_ACTIVE_ID));
   const [showProjectOverlay, setShowProjectOverlay] = useState(false);
   const [showManual, setShowManual] = useState(false);
-  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
-
+  const [showTheoryLab, setShowTheoryLab] = useState(false);
+  
   const activeProject = useMemo(() => projects.find(p => p.id === activeProjectId) || null, [projects, activeProjectId]);
 
   const [hasStarted, setHasStarted] = useState(() => !!activeProjectId);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [isArchitecting, setIsArchitecting] = useState(false);
+  const [isTheoryAnalyzing, setIsTheoryAnalyzing] = useState(false);
   const [projectInput, setProjectInput] = useState('');
+  const [theoryInput, setTheoryInput] = useState('');
+  const [theoryResult, setTheoryResult] = useState<ResearchBlueprint | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [editingEntry, setEditingEntry] = useState<BibEntry | null>(null);
   const [statsInsights, setStatsInsights] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,9 +259,48 @@ function App() {
     setActiveProjectId(null);
     setHasStarted(false);
     setShowProjectOverlay(false);
+    setShowTheoryLab(false);
   };
 
-  const createNewProject = (name: string = "New Research Project", initialEntries: BibEntry[] = []) => {
+  const handleArchitecting = async () => {
+    if (!projectInput.trim()) return;
+    setIsArchitecting(true);
+    try {
+      const bp = await generateResearchBlueprint(projectInput);
+      const newId = `proj-${Date.now()}`;
+      const newProj: Project = {
+          id: newId,
+          name: bp.projectScope,
+          lastModified: Date.now(),
+          entries: [],
+          blueprint: bp,
+          customColumns: bp.suggestedSchema.map(s => s.fieldName)
+      };
+      setProjects(prev => [newProj, ...prev]);
+      setActiveProjectId(newId);
+      setHasStarted(true);
+      setViewMode('blueprint');
+    } catch (e: any) {
+      alert("AI Architect Failed. Using fallback template.");
+    } finally {
+      setIsArchitecting(false);
+    }
+  };
+
+  const handleTheoryAnalyze = async () => {
+      if (!theoryInput.trim()) return;
+      setIsTheoryAnalyzing(true);
+      try {
+          const bp = await generateResearchBlueprint(theoryInput);
+          setTheoryResult(bp);
+      } catch (e) {
+          alert("Theory analysis failed. Using expert template.");
+      } finally {
+          setIsTheoryAnalyzing(false);
+      }
+  };
+
+  const createNewProject = (name: string = "New Research", initialEntries: BibEntry[] = []) => {
     const newProj: Project = {
       id: `proj-${Date.now()}`,
       name,
@@ -74,23 +314,19 @@ function App() {
     setShowProjectOverlay(false);
     setHasStarted(true);
     setViewMode(initialEntries.length > 0 ? 'list' : 'blueprint');
-    return newProj;
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setIsImporting(true);
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+        const ws = wb.Sheets[wb.SheetNames[0]];
         const rawData = XLSX.utils.sheet_to_json(ws) as any[];
-
         const parsedEntries: BibEntry[] = rawData.map((row, idx) => ({
           id: `imp-${Date.now()}-${idx}`,
           title: String(row.Title || row.title || row['书名'] || 'Untitled'),
@@ -99,29 +335,13 @@ function App() {
           translator: { name: String(row.Translator || row.translator || row['译者'] || 'Unknown'), gender: Gender.UNKNOWN },
           publisher: String(row.Publisher || row.publisher || row['出版社'] || 'N/A'),
           city: row.City || row.city || row['城市'],
-          originalCity: row.OriginalCity || row.originalCity || row['原产地城市'],
           sourceLanguage: row.SourceLanguage || row.sourceLanguage || 'N/A',
           targetLanguage: row.TargetLanguage || row.targetLanguage || 'N/A',
           tags: row.Tags ? String(row.Tags).split(',') : [],
           customMetadata: {}
         }));
-
-        const enrichedEntries = await Promise.all(parsedEntries.map(async (entry) => {
-          const updates: any = { ...entry.customMetadata };
-          if (entry.city) updates.targetCoord = await geocodeLocation(entry.city);
-          if (entry.originalCity) updates.sourceCoord = await geocodeLocation(entry.originalCity);
-          return { ...entry, customMetadata: updates };
-        }));
-
-        if (activeProject) {
-          updateActiveProject({ entries: [...enrichedEntries, ...activeProject.entries] });
-          setViewMode('list');
-        } else {
-          createNewProject(`Imported: ${file.name}`, enrichedEntries);
-        }
-      } catch (err) {
-        alert("文件解析失败，请确保格式正确。");
-      } finally {
+        createNewProject(`Import: ${file.name}`, parsedEntries);
+      } catch (err) { alert("Import Failed."); } finally {
         setIsImporting(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
@@ -129,383 +349,281 @@ function App() {
     reader.readAsBinaryString(file);
   };
 
-  const loadSampleProject = () => {
-    const sampleProj: Project = {
-      id: `sample-dglab-${Date.now()}`,
-      name: "DGLAB 资助下的葡语文学全球传播研究",
-      lastModified: Date.now(),
-      entries: SAMPLE_ENTRIES,
-      blueprint: {
-        projectScope: "利用 DGLAB 官方资助名录，分析葡萄牙语文学在跨国流动中的制度化中介路径。",
-        suggestedSchema: [
-            { fieldName: "Genre", description: "书籍类别", analyticalUtility: "分析流派传播力", importance: "Critical" },
-            { fieldName: "Apoios", description: "资助机构", analyticalUtility: "衡量机构支持度", importance: "Critical" }
-        ],
-        dataCleaningStrategy: "统一处理出版社名称；标注原产地坐标。",
-        storageAdvice: "建议采用标准 JSON-LD。",
-        methodology: "社会翻译学（Sociology of Translation）路径。",
-        visualizationStrategy: "使用 Force-Atlas-2 展示中心-边缘动态。",
-        collectionTips: "注意从 PDF 提取时的格式对齐。"
-      },
-      customColumns: ["Genre", "Apoios"]
-    };
-    setProjects(prev => [sampleProj, ...prev]);
-    setActiveProjectId(sampleProj.id);
-    setHasStarted(true);
-    setViewMode('network');
-  };
-
-  const updateActiveProject = (updates: Partial<Project>) => {
-    if (!activeProjectId) return;
-    setProjects(prev => prev.map(p => p.id === activeProjectId ? { ...p, ...updates, lastModified: Date.now() } : p));
-  };
-
-  const handleConfirmDeleteProject = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setProjects(prev => prev.filter(p => p.id !== id));
-    if (activeProjectId === id) {
-      setActiveProjectId(null);
-    }
-    setDeletingProjectId(null);
-  };
-
-  const handleApplyBlueprint = () => {
-    if (!activeProject?.blueprint) return;
-    const fieldsToAdd = activeProject.blueprint.suggestedSchema.map(s => s.fieldName);
-    updateActiveProject({ customColumns: Array.from(new Set([...activeProject.customColumns, ...fieldsToAdd])) });
-    setViewMode('list');
-  };
-
-  const handleSaveEntry = async () => {
-    if (!editingEntry || !activeProject) return;
-    setIsSaving(true);
-    let entryToSave = { ...editingEntry };
-    try {
-      if (editingEntry.originalCity) {
-        const coord = await geocodeLocation(editingEntry.originalCity);
-        entryToSave.customMetadata = { ...entryToSave.customMetadata, sourceCoord: coord };
-      }
-      if (editingEntry.city) {
-        const coord = await geocodeLocation(editingEntry.city);
-        entryToSave.customMetadata = { ...entryToSave.customMetadata, targetCoord: coord };
-      }
-    } catch (e) {}
-
-    const entries = [...activeProject.entries];
-    if (editingEntry.id === 'new') {
-      entries.unshift({ ...entryToSave, id: `ent-${Date.now()}` });
-    } else {
-      const idx = entries.findIndex(x => x.id === editingEntry.id);
-      if (idx !== -1) entries[idx] = entryToSave;
-    }
-    updateActiveProject({ entries });
-    setEditingEntry(null);
-    setIsSaving(false);
-  };
-
-  const ProjectHubOverlay = () => (
-    <div className="fixed inset-0 bg-white/98 backdrop-blur-3xl z-[600] flex flex-col p-10 md:p-20 animate-fadeIn overflow-auto text-slate-900">
-      <div className="max-w-7xl w-full mx-auto space-y-16">
-        <div className="flex justify-between items-end border-b border-slate-100 pb-12 flex-shrink-0">
-          <div className="space-y-2">
-             <h2 className="text-5xl font-bold serif leading-none">Project Hub</h2>
-             <h2 className="text-3xl font-bold serif text-slate-400 italic">实验室项目中心</h2>
-          </div>
-          <button onClick={() => setShowProjectOverlay(false)} className="text-7xl font-light hover:text-rose-500 transition-colors leading-none">&times;</button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-10 py-4">
-          {projects.map(p => (
-            <div key={p.id} className="p-10 bg-white border border-slate-100 rounded-[3rem] shadow-sm hover:shadow-2xl transition-all relative h-[400px] flex flex-col justify-between overflow-hidden group border-b-8 border-b-transparent hover:border-b-indigo-500">
-              {deletingProjectId === p.id ? (
-                <div className="absolute inset-0 bg-rose-500/95 backdrop-blur-md p-10 text-white z-50 flex flex-col justify-center items-center text-center space-y-6 animate-fadeIn">
-                   <p className="text-2xl font-bold serif leading-tight">确定要永久删除？<br/><span className="text-xs font-normal opacity-70">该研究课题下的所有数据将无法恢复。</span></p>
-                   <div className="flex gap-4 w-full">
-                      <button onClick={(e) => { e.stopPropagation(); setDeletingProjectId(null); }} className="flex-1 py-4 bg-white/20 rounded-2xl font-bold text-xs uppercase">取消</button>
-                      <button onClick={(e) => handleConfirmDeleteProject(p.id, e)} className="flex-1 py-4 bg-white text-rose-600 rounded-2xl font-bold text-xs uppercase shadow-xl">确认删除</button>
-                   </div>
-                </div>
-              ) : (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); setDeletingProjectId(p.id); }} 
-                  className="absolute top-8 right-8 text-slate-200 hover:text-rose-500 text-4xl font-light transition-colors z-20"
-                >&times;</button>
-              )}
-              
-              <div className="space-y-6">
-                <div className="w-16 h-16 bg-slate-50 rounded-[1.5rem] flex items-center justify-center text-3xl shadow-inner">📓</div>
-                <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-300">Project Name / 课题名</label>
-                   <input 
-                      className="w-full text-xl font-bold serif bg-transparent border-none outline-none focus:bg-slate-50 p-2 rounded-xl transition-all" 
-                      value={p.name} 
-                      onChange={(e) => {
-                          const val = e.target.value;
-                          setProjects(prev => prev.map(x => x.id === p.id ? {...x, name: val} : x));
-                      }}
-                      onClick={e => e.stopPropagation()}
-                   />
-                </div>
-              </div>
-              <button onClick={() => { setActiveProjectId(p.id); setShowProjectOverlay(false); }} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-lg">进入实验室 / Access Lab</button>
-            </div>
-          ))}
-          <button onClick={() => createNewProject()} className="p-10 border-4 border-dashed border-slate-100 rounded-[3.5rem] text-slate-300 hover:text-indigo-400 hover:border-indigo-100 transition-all flex flex-col items-center justify-center gap-6 h-[400px] group flex-shrink-0">
-            <span className="text-6xl group-hover:scale-110 transition-transform">+</span>
-            <div className="text-center space-y-2">
-                <span className="text-xs font-black uppercase tracking-widest block">New Research Laboratory</span>
-                <span className="text-xs font-black uppercase tracking-widest block opacity-50">新建数字实验室</span>
-            </div>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
   if (!hasStarted) {
     return (
-      <div className="h-screen bg-[#fcfcfd] flex flex-col items-center justify-center p-12 relative overflow-hidden">
+      <div className="h-screen bg-white flex flex-col items-center justify-center p-8 relative overflow-hidden select-none text-slate-900">
         <GlobalFlowBackground />
         
-        {isImporting && (
-            <div className="fixed inset-0 bg-white/80 backdrop-blur-2xl z-[1000] flex flex-col items-center justify-center space-y-6">
-                <div className="w-20 h-20 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-3xl font-bold serif text-slate-800">正在解析书目数据 / Importing Archives...</p>
-            </div>
-        )}
-
-        <div className="relative z-10 max-w-6xl w-full text-center animate-fadeIn space-y-16">
-          <div className="w-28 h-28 bg-slate-900 rounded-[2.5rem] flex items-center justify-center text-white font-serif font-bold text-6xl shadow-2xl mx-auto mb-12 transform -rotate-3 hover:rotate-0 transition-transform cursor-pointer" onClick={() => setShowProjectOverlay(true)}>T</div>
-          
-          <div className="space-y-6">
-            <h1 className="text-9xl font-bold serif text-slate-900 tracking-tighter drop-shadow-sm">TransData</h1>
-            <div className="space-y-4">
-                <p className="text-2xl text-slate-600 font-serif italic leading-relaxed font-medium">翻译研究数字实验室：数据采集・分析・流通・可视化</p>
-                <p className="text-xs text-indigo-400 font-serif uppercase tracking-[0.4em] font-bold opacity-80">Specialized Digital Laboratory for Translation Studies</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-10 w-full mt-20 px-6">
-            <button onClick={() => createNewProject("AI 研究课题")} className="group bg-white/60 backdrop-blur-md p-12 rounded-[4rem] border border-white/80 shadow-sm transition-all text-left flex flex-col h-full hover:border-indigo-400 hover:bg-indigo-50/30 hover:shadow-2xl hover:-translate-y-2">
-              <div className="text-6xl mb-12 transform group-hover:scale-110 transition-transform">📐</div>
-              <div className="space-y-2 mb-10">
-                <h3 className="text-3xl font-bold serif text-slate-800 leading-none">AI Architect</h3>
-                <h3 className="text-base font-bold serif text-slate-400 italic">AI 架构师</h3>
-              </div>
-              <div className="space-y-4 mt-auto">
-                <p className="text-xs text-slate-500 leading-relaxed uppercase font-black tracking-widest opacity-80">Assist in defining research perspective and data schema.</p>
-              </div>
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} className="group bg-white/60 backdrop-blur-md p-12 rounded-[4rem] border border-white/80 shadow-sm transition-all text-left flex flex-col h-full hover:border-emerald-400 hover:bg-emerald-50/30 hover:shadow-2xl hover:-translate-y-2">
-              <div className="text-6xl mb-12 transform group-hover:scale-110 transition-transform">📊</div>
-              <div className="space-y-2 mb-10">
-                <h3 className="text-3xl font-bold serif text-slate-800 leading-none">Batch Import</h3>
-                <h3 className="text-base font-bold serif text-slate-400 italic">批量导入</h3>
-              </div>
-              <div className="space-y-4 mt-auto">
-                <p className="text-xs text-slate-500 leading-relaxed uppercase font-black tracking-widest opacity-80">Rapidly import existing bibliographic Excel datasets.</p>
-              </div>
-            </button>
-            <button onClick={loadSampleProject} className="group bg-white/60 backdrop-blur-md p-12 rounded-[4rem] border border-white/80 shadow-sm transition-all text-left flex flex-col h-full ring-1 ring-amber-100 ring-offset-8 hover:border-amber-400 hover:bg-amber-50/30 hover:shadow-2xl hover:-translate-y-2">
-              <div className="text-6xl mb-12 transform group-hover:scale-110 transition-transform">📖</div>
-              <div className="space-y-2 mb-10">
-                <h3 className="text-3xl font-bold serif text-slate-800 leading-none">Sample Lab</h3>
-                <h3 className="text-base font-bold serif text-slate-400 italic">样本实验室</h3>
-              </div>
-              <div className="space-y-4 mt-auto">
-                <p className="text-xs text-slate-500 leading-relaxed uppercase font-black tracking-widest opacity-80">Load DGLAB catalog to experience dynamic analysis.</p>
-              </div>
-            </button>
-          </div>
-
-          <div className="pt-20 flex flex-col items-center gap-12">
-             <div className="flex gap-8">
-                <button onClick={() => setShowProjectOverlay(true)} className="px-12 py-6 bg-slate-900 text-white rounded-[2.5rem] text-[12px] font-black uppercase tracking-widest shadow-2xl flex items-center gap-5 hover:bg-slate-800 hover:scale-105 transition-all">
-                  📁 项目中心 / Project Hub ({projects.length})
-                </button>
-                <button onClick={() => setShowManual(true)} className="px-12 py-6 bg-white/80 backdrop-blur-sm border border-slate-200 text-slate-600 rounded-[2.5rem] text-[12px] font-black uppercase tracking-widest shadow-lg hover:border-indigo-400 hover:bg-indigo-50/50 transition-all">
-                  📘 用户手册 / Manual
-                </button>
-             </div>
-             <p className="text-xs font-black uppercase tracking-[0.5em] text-slate-300">@Lidia Zhou Mengyuan 2026</p>
-          </div>
+        {/* Top Status Bar with API selection */}
+        <div className="absolute top-10 right-10 z-50">
+            <ServiceStatus />
         </div>
+
+        <div className="relative z-10 flex flex-col items-center text-center mb-16 animate-fadeIn">
+            <div className="w-20 h-20 bg-slate-900 rounded-[2.2rem] flex items-center justify-center text-white font-bold serif text-5xl shadow-2xl mb-10">T</div>
+            <h1 className="text-[80px] md:text-[100px] font-bold serif text-slate-900 tracking-tighter leading-none mb-6">Translation as Data</h1>
+            <p className="text-xl text-slate-600 font-serif italic mb-2">翻译研究数字实验室：数据采集 · 分析 · 流通 · 可视化</p>
+            <p className="text-[10px] text-indigo-400 font-black uppercase tracking-[0.5em]">Specialized Digital Laboratory for Translation Studies</p>
+        </div>
+
+        {/* Primary Functional Grid (3 columns) */}
+        <div className="relative z-10 w-full max-w-[1200px] grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+            <div className="bg-white rounded-[3rem] p-10 border border-slate-100 shadow-sm hover:shadow-2xl transition-all group flex flex-col items-center text-center">
+                <div className="text-4xl mb-8 opacity-60 group-hover:opacity-100 transition-opacity">📐</div>
+                <h3 className="text-2xl font-bold serif text-slate-800 mb-2">AI Architect</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-6">AI 架构师</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-serif italic mb-8 h-10">Assist in defining research perspective and data schema.</p>
+                <textarea 
+                    className="w-full p-4 bg-slate-50 rounded-2xl border-none outline-none text-xs font-serif mb-4 h-24 resize-none focus:ring-2 ring-indigo-50"
+                    placeholder="Input research topic..."
+                    value={projectInput}
+                    onChange={e => setProjectInput(e.target.value)}
+                />
+                <button 
+                    onClick={handleArchitecting}
+                    disabled={isArchitecting || !projectInput.trim()}
+                    className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-600 hover:text-slate-900 transition-colors"
+                >
+                    {isArchitecting ? "Wait..." : "Generate →"}
+                </button>
+            </div>
+
+            <div className="bg-white rounded-[3rem] p-10 border border-slate-100 shadow-sm hover:shadow-2xl transition-all group flex flex-col items-center text-center cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                <div className="text-4xl mb-8 opacity-60 group-hover:opacity-100 transition-opacity">📊</div>
+                <h3 className="text-2xl font-bold serif text-slate-800 mb-2">Batch Import</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-6">批量导入</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-serif italic mb-8 h-10">Rapidly import existing bibliographic Excel datasets.</p>
+                <div className="mt-auto text-[10px] font-black uppercase tracking-[0.3em] text-indigo-600">Select File →</div>
+            </div>
+
+            <div className="bg-white rounded-[3rem] p-10 border border-slate-100 shadow-sm hover:shadow-2xl transition-all group flex flex-col items-center text-center cursor-pointer" onClick={() => setShowTheoryLab(true)}>
+                <div className="text-4xl mb-8 opacity-60 group-hover:opacity-100 transition-opacity">🔭</div>
+                <h3 className="text-2xl font-bold serif text-slate-800 mb-2">Theory Lab</h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-6">理论实验室</p>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-serif italic mb-8 h-10">Translation as Data Framework: Mapping collection to methods.</p>
+                <div className="mt-auto text-[10px] font-black uppercase tracking-[0.3em] text-indigo-600">Open Lab →</div>
+            </div>
+        </div>
+
+        {/* Distinct Sample Lab Call-to-Action below the main grid */}
+        <div className="relative z-10 w-full max-w-[1200px] mb-12">
+            <button 
+                onClick={() => createNewProject("Sample Lab: World Lit", SAMPLE_ENTRIES)}
+                className="w-full py-8 bg-slate-50/50 border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-xl transition-all flex items-center justify-center gap-6 group hover:bg-indigo-50/30"
+            >
+                <span className="text-3xl group-hover:rotate-12 transition-transform">📖</span>
+                <div className="text-left">
+                    <h3 className="text-lg font-bold serif text-slate-800">Sample Lab / 样本实验室</h3>
+                    <p className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Experience the dynamic lab with DGLAB pre-loaded catalog</p>
+                </div>
+                <div className="ml-8 px-6 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-indigo-600 transition-all">
+                    Explore Now →
+                </div>
+            </button>
+        </div>
+
+        {/* Global Navigation Section */}
+        <div className="relative z-10 flex gap-8 mb-16">
+            <button onClick={() => setShowProjectOverlay(true)} className="flex items-center gap-4 px-12 py-6 bg-slate-900 text-white rounded-[1.8rem] text-[10px] font-black uppercase tracking-[0.3em] hover:bg-indigo-600 transition-all shadow-2xl group">
+                <span className="text-lg group-hover:scale-125 transition-transform">📓</span> 项目中心 / Project Hub ({projects.length})
+            </button>
+            <button onClick={() => setShowManual(true)} className="flex items-center gap-4 px-12 py-6 bg-white border border-slate-200 text-slate-500 rounded-[1.8rem] text-[10px] font-black uppercase tracking-[0.3em] hover:bg-slate-50 hover:text-indigo-600 transition-all shadow-sm group">
+                <span className="text-lg group-hover:scale-125 transition-transform">📘</span> 用户手册 / Manual
+            </button>
+        </div>
+
+        {/* Creator's Signature */}
+        <div className="relative z-10 flex flex-col items-center">
+            <p className="text-[10px] font-black uppercase tracking-[0.6em] text-slate-300 opacity-60">@Lidia Zhou Mengyuan 2026</p>
+        </div>
+
+        {showProjectOverlay && (
+          <ProjectHubOverlay 
+            projects={projects} 
+            setProjects={setProjects} 
+            onEnter={(id) => { setActiveProjectId(id); setShowProjectOverlay(false); }} 
+            onClose={() => setShowProjectOverlay(false)} 
+          />
+        )}
+        {showManual && <UserManual onClose={() => setShowManual(false)} />}
+        {showTheoryLab && (
+          <TheoryLabInterface 
+            input={theoryInput} 
+            setInput={setTheoryInput} 
+            onAnalyze={handleTheoryAnalyze} 
+            result={theoryResult} 
+            isAnalyzing={isTheoryAnalyzing} 
+            onClose={() => setShowTheoryLab(false)} 
+          />
+        )}
         <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
-        {showProjectOverlay && <ProjectHubOverlay />}
       </div>
     );
   }
 
   return (
-    <div className="h-screen bg-[#fcfcfd] flex flex-col font-sans overflow-hidden">
-      <header className="bg-white/80 backdrop-blur-2xl border-b border-slate-100 h-24 flex items-center shrink-0 px-12 sticky top-0 z-[200]">
+    <div className="h-screen bg-[#fcfcfd] flex flex-col overflow-hidden text-slate-900">
+      <header className="bg-white border-b border-slate-100 h-28 flex items-center shrink-0 px-12 z-[200]">
         <div className="max-w-[1920px] w-full mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-6">
-             <button onClick={handleReturnToWelcome} className="w-12 h-12 bg-slate-100 hover:bg-indigo-100 rounded-[1rem] flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all text-2xl" title="回到欢迎页">🏠</button>
-             <div className="flex items-center gap-4 cursor-pointer" onClick={() => setShowProjectOverlay(true)}>
-                <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white font-bold serif text-2xl shadow-md">T</div>
-                <div className="hidden lg:block">
-                   <h1 className="text-lg font-bold text-slate-800 serif leading-none">TransData</h1>
-                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1 truncate max-w-[200px]">{activeProject?.name}</p>
+          <div className="flex items-center gap-8">
+             <button onClick={handleReturnToWelcome} className="w-12 h-12 bg-slate-100 hover:bg-indigo-100 rounded-xl flex items-center justify-center text-slate-400 hover:text-indigo-600 transition-all text-xl" title="Go Home">🏠</button>
+             <button onClick={() => setShowProjectOverlay(true)} className="w-12 h-12 bg-slate-50 hover:bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-900 transition-all text-xl" title="Project Switcher">📓</button>
+             <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white font-bold serif text-2xl shadow-lg">T</div>
+                <div className="space-y-0.5">
+                   <h1 className="text-lg font-bold text-slate-800 serif leading-none">Translation as Data</h1>
+                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate max-w-[200px]">{activeProject?.name}</p>
                 </div>
              </div>
           </div>
-          <nav className="flex space-x-2 bg-slate-100/50 p-1.5 rounded-[1.5rem]">
+          <nav className="flex space-x-1 bg-slate-100/80 p-1.5 rounded-2xl">
             {[
-              { id: 'list', label: 'Archive' },
-              { id: 'network', label: 'Network Lab' },
-              { id: 'stats', label: 'Analytics' },
-              { id: 'map', label: 'Global Map' },
-              { id: 'blueprint', label: 'Blueprint' }
+              { id: 'list', label: 'Archive / 著录' },
+              { id: 'network', label: 'Network / 网络' },
+              { id: 'stats', label: 'Stats / 统计' },
+              { id: 'map', label: 'Map / 地图' },
+              { id: 'blueprint', label: 'Blueprint / 蓝图' }
             ].map((m) => (
-              <button key={m.id} onClick={() => setViewMode(m.id as any)} className={`px-8 py-3 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === m.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}>
+              <button key={m.id} onClick={() => setViewMode(m.id as any)} className={`px-8 py-3.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === m.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
                 {m.label}
               </button>
             ))}
           </nav>
-          <div className="flex gap-3">
-            <button onClick={() => fileInputRef.current?.click()} className="bg-slate-100 text-slate-600 px-8 py-3.5 rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-indigo-50 shadow-sm transition-all">Import</button>
-            <button onClick={() => setEditingEntry({ id: 'new', title: '', author: {name: '', gender: Gender.UNKNOWN}, translator: {name: '', gender: Gender.UNKNOWN}, publicationYear: 2024, publisher: '', sourceLanguage: '', targetLanguage: '', tags: [], customMetadata: {} })} className="bg-slate-900 text-white px-8 py-3.5 rounded-2xl text-[11px] font-bold uppercase tracking-widest hover:bg-indigo-600 shadow-lg transition-all">+ New Entry</button>
+          <div className="flex items-center gap-6">
+             <div className="hidden md:block">
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${!!process.env.API_KEY ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                   <div className="w-1 h-1 rounded-full bg-current"></div>
+                   <span className="text-[8px] font-black uppercase tracking-[0.2em]">{!!process.env.API_KEY ? 'AI Active' : 'Expert Mode'}</span>
+                </div>
+             </div>
+             <div className="flex gap-3">
+                <button onClick={() => fileInputRef.current?.click()} className="bg-slate-50 text-slate-500 px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-50 transition-all">Import</button>
+                <button onClick={() => createNewProject()} className="bg-slate-900 text-white px-8 py-3.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-lg">+ New Lab</button>
+             </div>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden flex flex-col relative h-full">
-        {viewMode === 'blueprint' ? (
-           <div className="flex-1 overflow-y-auto p-16 bg-slate-50/30 flex flex-col items-center">
-              {!activeProject?.blueprint ? (
-                 <div className="max-w-4xl w-full bg-white p-16 rounded-[4rem] shadow-xl space-y-12 animate-slideUp">
-                    <div className="text-center">
-                       <h2 className="text-3xl font-bold serif mb-4">开启您的研究规划 / Research Architecture</h2>
-                       <p className="text-slate-400 font-serif italic text-lg leading-relaxed px-16">Input your topic; AI will curate a methodology-driven schema.</p>
-                    </div>
-                    <textarea 
-                       className="w-full h-48 p-8 bg-slate-50 rounded-[2rem] outline-none text-lg font-serif border border-transparent focus:border-indigo-100 shadow-inner" 
-                       placeholder="例如：分析当代葡语文学在东亚的翻译路径..." 
-                       value={projectInput} 
-                       onChange={e => setProjectInput(e.target.value)} 
-                    />
-                    <button 
-                       onClick={async () => {
-                          if (!projectInput.trim()) return;
-                          setIsArchitecting(true);
-                          try {
-                            const bp = await generateResearchBlueprint(projectInput);
-                            updateActiveProject({ blueprint: bp, name: bp.projectScope });
-                          } catch (e) { alert("AI 调用失败。"); }
-                          setIsArchitecting(false);
-                       }} 
-                       className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-bold text-lg shadow-xl hover:bg-indigo-600 transition-all uppercase tracking-widest"
-                    >{isArchitecting ? "正在构思..." : "生成研究蓝图 / Generate Blueprint"}</button>
-                 </div>
-              ) : (
-                 <div className="max-w-6xl w-full bg-white p-16 rounded-[4rem] shadow-xl space-y-12 animate-fadeIn">
-                    <div className="border-b border-slate-100 pb-8"><h2 className="text-4xl font-bold serif leading-tight text-slate-800">{activeProject.blueprint.projectScope}</h2></div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                       <div className="space-y-10">
-                          <section>
-                             <h4 className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-4">01 分析方法论 / Methodology</h4>
-                             <p className="text-lg text-slate-700 font-serif italic leading-relaxed">{activeProject.blueprint.methodology}</p>
-                          </section>
-                          <section className="bg-slate-900 p-10 rounded-[2.5rem] text-white">
-                             <h4 className="text-[10px] font-black uppercase tracking-widest text-indigo-300 mb-4">02 可视化策略 / Visualization</h4>
-                             <p className="text-xl font-serif italic leading-relaxed">{activeProject.blueprint.visualizationStrategy}</p>
-                          </section>
-                       </div>
-                       <div className="space-y-10">
-                          <section>
-                             <h4 className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-4">03 架构建议 / Schema</h4>
-                             <div className="space-y-4">
-                               {activeProject.blueprint.suggestedSchema.map((s, i) => (
-                                 <div key={i} className="p-4 bg-slate-50 rounded-xl">
-                                    <p className="font-bold text-slate-800">{s.fieldName}</p>
-                                    <p className="text-sm text-slate-500">{s.description}</p>
-                                 </div>
-                               ))}
-                             </div>
-                          </section>
-                       </div>
-                    </div>
-                    <div className="pt-10 flex gap-6">
-                       <button onClick={() => updateActiveProject({ blueprint: null })} className="px-10 py-5 bg-slate-100 text-slate-400 rounded-full font-bold text-[11px] uppercase tracking-widest">重新策划 / Redesign</button>
-                       <button onClick={handleApplyBlueprint} className="flex-1 py-5 bg-indigo-600 text-white rounded-full font-bold text-lg shadow-lg hover:bg-indigo-700 transition-all uppercase tracking-widest">同步架构 / Apply Schema</button>
-                    </div>
-                 </div>
-              )}
-           </div>
-        ) : viewMode === 'network' ? (
-           <NetworkGraph data={activeProject?.entries || []} customColumns={activeProject?.customColumns || []} blueprint={activeProject?.blueprint || null} onDataUpdate={(newEntries) => updateActiveProject({ entries: newEntries })} />
-        ) : viewMode === 'stats' ? (
-           <div className="flex-1 overflow-y-auto bg-slate-50/50">
-              <StatsDashboard data={activeProject?.entries || []} insights={statsInsights} onGenerateInsights={async () => { setIsAnalyzing(true); setStatsInsights(await generateInsights(activeProject?.entries || [])); setIsAnalyzing(false); }} isAnalyzing={isAnalyzing} customColumns={activeProject?.customColumns || []} />
-           </div>
-        ) : viewMode === 'map' ? (
-           <WorldMap data={activeProject?.entries || []} />
-        ) : (
-           <div className="p-12 flex-1 overflow-auto animate-fadeIn bg-slate-50/20">
-              <div className="max-w-[1920px] mx-auto w-full space-y-8">
-                <div className="bg-white rounded-[3rem] border border-slate-100 overflow-hidden shadow-sm">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
+      <main className="flex-1 overflow-hidden relative">
+        {viewMode === 'list' && (
+           <div className="p-12 h-full overflow-auto animate-fadeIn bg-slate-50/20">
+              <div className="max-w-[1920px] mx-auto w-full space-y-10">
+                <div className="flex justify-between items-center">
+                    <h2 className="text-4xl font-bold serif text-slate-900">Bibliographic Archive</h2>
+                    <input className="w-80 p-4 bg-white rounded-xl border border-slate-200 text-sm focus:ring-4 ring-indigo-50 outline-none shadow-sm" placeholder="Search archive..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                </div>
+                <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden ring-1 ring-slate-100">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50/50 text-[10px] font-black uppercase text-slate-400 tracking-widest border-b border-slate-100">
                         <tr>
-                          <th className="p-8">书目信息 (Work Data)</th>
-                          <th className="p-8">著者 (Author)</th>
-                          <th className="p-8">译者 (Translator)</th>
-                          <th className="p-8">年份</th>
-                          {activeProject?.customColumns.map(c => <th key={c} className="p-8 text-indigo-400">{c}</th>)}
+                          <th className="p-10">Work Title</th>
+                          <th className="p-10">Author</th>
+                          <th className="p-10">Translator</th>
+                          <th className="p-10">Year</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 font-serif text-lg">
                         {activeProject?.entries.filter(e => e.title.toLowerCase().includes(searchTerm.toLowerCase())).map(e => (
-                          <tr key={e.id} className="hover:bg-indigo-50/30 transition-colors group">
-                            <td className="p-8 font-bold text-slate-800 cursor-pointer" onClick={() => setEditingEntry(e)}>{e.title}</td>
-                            <td className="p-8">{e.author.name}</td>
-                            <td className="p-8 text-indigo-600">{e.translator.name}</td>
-                            <td className="p-8 text-slate-400">{e.publicationYear}</td>
-                            {activeProject?.customColumns.map(c => <td key={c} className="p-8 text-slate-500 italic">{e.customMetadata?.[c] || '-'}</td>)}
+                          <tr key={e.id} className="hover:bg-indigo-50/30 transition-colors cursor-pointer">
+                            <td className="p-10 font-bold text-slate-800">{e.title}</td>
+                            <td className="p-10 text-slate-600">{e.author.name}</td>
+                            <td className="p-10 text-indigo-600 font-semibold">{e.translator.name}</td>
+                            <td className="p-10 text-slate-400 font-mono">{e.publicationYear}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    {activeProject?.entries.length === 0 && (
-                      <div className="p-20 text-center space-y-4">
-                         <div className="text-6xl">📭</div>
-                         <p className="text-xl font-serif text-slate-400">尚无著录数据。请通过导入或新建开始研究。</p>
-                      </div>
-                    )}
                 </div>
               </div>
            </div>
         )}
+        {viewMode === 'network' && (
+           <NetworkGraph data={activeProject?.entries || []} customColumns={activeProject?.customColumns || []} blueprint={activeProject?.blueprint || null} onDataUpdate={() => {}} />
+        )}
+        {viewMode === 'stats' && (
+           <StatsDashboard data={activeProject?.entries || []} insights={statsInsights} onGenerateInsights={async () => { setIsAnalyzing(true); setStatsInsights(await generateInsights(activeProject?.entries || [])); setIsAnalyzing(false); }} isAnalyzing={isAnalyzing} customColumns={activeProject?.customColumns || []} />
+        )}
+        {viewMode === 'map' && (
+           <WorldMap data={activeProject?.entries || []} />
+        )}
+        {viewMode === 'blueprint' && (
+           <div className="h-full overflow-y-auto bg-slate-50/30 p-20 flex flex-col items-center">
+              {activeProject?.blueprint && (
+                 <div className="max-w-[1920px] w-full bg-white p-24 rounded-[4rem] shadow-2xl space-y-20 animate-fadeIn ring-1 ring-slate-100">
+                    <div className="flex justify-between items-start border-b border-slate-100 pb-16">
+                       <div className="space-y-5 text-slate-900">
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-500">Research Framework Blueprint</h4>
+                          <h2 className="text-6xl font-bold serif leading-tight tracking-tight">{activeProject.blueprint.projectScope}</h2>
+                       </div>
+                    </div>
+
+                    <div className="space-y-12">
+                        <div className="flex items-center gap-4">
+                            <h3 className="text-2xl font-bold serif text-slate-900 uppercase tracking-widest">Translation as Data Matrix</h3>
+                            <div className="h-px flex-1 bg-slate-100"></div>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
+                            {activeProject.blueprint.dimensions.map((dim, idx) => (
+                                <div key={idx} className={`p-10 rounded-[2.5rem] border transition-all flex flex-col justify-between ${dim.relevance > 70 ? 'bg-indigo-50/20 border-indigo-100 shadow-lg' : 'bg-slate-50/50 border-slate-100'}`}>
+                                    <div className="space-y-6">
+                                        <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-2xl shadow-sm border border-slate-100">
+                                            {idx === 0 ? '👤' : idx === 1 ? '📜' : idx === 2 ? '📍' : idx === 3 ? '💬' : '🗣️'}
+                                        </div>
+                                        <div className="space-y-3">
+                                            <h4 className="text-lg font-bold serif text-slate-900 leading-none">{dim.dimension}</h4>
+                                            <p className="text-xs text-slate-500 font-serif italic leading-relaxed">{dim.coreQuestion}</p>
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div className="space-y-1.5">
+                                                <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Data Sources</p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {dim.dataSources.map(ds => <span key={ds} className="text-[10px] bg-white px-2 py-1 rounded-lg border border-slate-100 text-slate-600">{ds}</span>)}
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">DH Methods</p>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {dim.dhMethods.map(m => <span key={m} className="text-[10px] bg-slate-900 text-white px-2 py-1 rounded-lg font-bold">{m}</span>)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="pt-16 border-t border-slate-50">
+                       <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-800 mb-8">Methodology Synthesis</h4>
+                       <p className="text-2xl text-slate-600 font-serif italic leading-relaxed pl-12 border-l-4 border-indigo-500">{activeProject.blueprint.methodology}</p>
+                    </div>
+                 </div>
+              )}
+           </div>
+        )}
       </main>
 
-      {showProjectOverlay && <ProjectHubOverlay />}
-      {showManual && <UserManual onClose={() => setShowManual(false)} />}
-      <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
-
-      {editingEntry && (
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xl z-[500] flex items-center justify-center p-8 animate-fadeIn">
-              <div className="bg-white rounded-[4rem] shadow-2xl max-w-5xl w-full p-16 flex flex-col gap-10 overflow-hidden relative">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-3xl font-bold serif">{editingEntry.id === 'new' ? '新建著录记录 / New Record' : '编辑元数据 / Edit Metadata'}</h3>
-                    <button onClick={() => setEditingEntry(null)} className="text-5xl font-light hover:text-rose-500 transition-all">&times;</button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-8 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
-                      <div className="col-span-2">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">作品书名 (Work Title)</label>
-                          <input className="w-full p-6 bg-slate-50 rounded-[1.5rem] outline-none text-2xl serif border border-transparent focus:border-indigo-100 shadow-inner" value={editingEntry.title} onChange={e => setEditingEntry({...editingEntry, title: e.target.value})} />
-                      </div>
-                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">著者 (Author)</label><input className="w-full p-5 bg-slate-50 rounded-[1.5rem] outline-none" value={editingEntry.author.name} onChange={e => setEditingEntry({...editingEntry, author: {...editingEntry.author, name: e.target.value}})} /></div>
-                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">译者 (Translator)</label><input className="w-full p-5 bg-slate-50 rounded-[1.5rem] outline-none text-indigo-600 font-bold" value={editingEntry.translator.name} onChange={e => setEditingEntry({...editingEntry, translator: {...editingEntry.translator, name: e.target.value}})} /></div>
-                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">年份</label><input type="number" className="w-full p-5 bg-slate-50 rounded-[1.5rem] outline-none" value={editingEntry.publicationYear} onChange={e => setEditingEntry({...editingEntry, publicationYear: parseInt(e.target.value)})} /></div>
-                      <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">出版社</label><input className="w-full p-5 bg-slate-50 rounded-[1.5rem] outline-none" value={editingEntry.publisher} onChange={e => setEditingEntry({...editingEntry, publisher: e.target.value})} /></div>
-                  </div>
-                  <div className="flex gap-6 pt-10 border-t border-slate-100">
-                      <button onClick={() => setEditingEntry(null)} className="px-12 py-5 bg-slate-100 rounded-[1.5rem] text-[12px] font-bold text-slate-400 hover:bg-slate-200 transition-colors uppercase tracking-widest">取消 / Cancel</button>
-                      <button onClick={handleSaveEntry} disabled={isSaving} className="flex-1 py-5 bg-slate-900 text-white rounded-[1.5rem] font-bold text-xl shadow-xl hover:bg-indigo-600 transition-all uppercase tracking-widest">确认存档 / Archive Record</button>
-                  </div>
-              </div>
-          </div>
+      {showProjectOverlay && (
+        <ProjectHubOverlay 
+          projects={projects} 
+          setProjects={setProjects} 
+          onEnter={(id) => { setActiveProjectId(id); setShowProjectOverlay(false); }} 
+          onClose={() => setShowProjectOverlay(false)} 
+        />
       )}
+      {showManual && <UserManual onClose={() => setShowManual(false)} />}
+      {showTheoryLab && (
+        <TheoryLabInterface 
+          input={theoryInput} 
+          setInput={setTheoryInput} 
+          onAnalyze={handleTheoryAnalyze} 
+          result={theoryResult} 
+          isAnalyzing={isTheoryAnalyzing} 
+          onClose={() => setShowTheoryLab(false)} 
+        />
+      )}
+      <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
     </div>
   );
 }

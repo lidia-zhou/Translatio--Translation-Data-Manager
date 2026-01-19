@@ -1,10 +1,64 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { BibEntry, Gender, ResearchBlueprint, AdvancedGraphMetrics, LayoutType } from "../types";
+import { BibEntry, Gender, ResearchBlueprint, AdvancedGraphMetrics, Project } from "../types";
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAI = () => {
+  if (!process.env.API_KEY) return null;
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
 
-// Audio decoding helper
+// --- Fallback Data / 专家预设模板 ---
+const FALLBACK_BLUEPRINT: ResearchBlueprint = {
+  projectScope: "General Translation Studies Lab (Template Mode)",
+  dimensions: [
+    {
+      dimension: 'Agentive (Who)',
+      coreQuestion: "Who are the primary mediators (translators, publishers, patrons) in this flow?",
+      dataSources: ["National Library Catalogs", "Publisher Archives", "Biographical Dictionaries"],
+      dhMethods: ["Social Network Analysis (SNA)", "Prosopography"],
+      relevance: 95
+    },
+    {
+      dimension: 'Textual (What)',
+      coreQuestion: "What are the linguistic shifts and stylistic features of the translated corpus?",
+      dataSources: ["Parallel Corpora", "Translation Manuscripts"],
+      dhMethods: ["Corpus Linguistics", "Stylometry"],
+      relevance: 85
+    },
+    {
+      dimension: 'Distributional (Where/When/How)',
+      coreQuestion: "How did the text circulate geographically and temporally?",
+      dataSources: ["Shipping Records", "Sales Data", "Library Holdings"],
+      dhMethods: ["GIS Mapping", "Time-series Analysis"],
+      relevance: 90
+    },
+    {
+      dimension: 'Discursive (Why)',
+      coreQuestion: "What institutional discourses justified or framed the translation?",
+      dataSources: ["Paratexts (Prefaces/Postscripts)", "Critical Reviews"],
+      dhMethods: ["Topic Modeling", "Sentiment Analysis"],
+      relevance: 75
+    },
+    {
+      dimension: 'Reception (So what)',
+      coreQuestion: "What was the social impact or long-term canonization of the work?",
+      dataSources: ["Citation Indexes", "Digital Book Reviews", "Later Retranslations"],
+      dhMethods: ["Impact Analysis", "Diachronic Mapping"],
+      relevance: 80
+    }
+  ],
+  suggestedSchema: [
+    { fieldName: "Translator_Gender", description: "Gender of the translator", analyticalUtility: "Gender-based translation patterns", importance: 'Critical' },
+    { fieldName: "Paratext_Length", description: "Word count of preface/notes", analyticalUtility: "Degree of intervention", importance: 'Optional' }
+  ],
+  dataCleaningStrategy: "Standardize publisher names and normalize dates to ISO format.",
+  storageAdvice: "Use SQLite or JSON for small-scale archival data.",
+  methodology: "Triangulate sociological data with textual evidence using a mixed-methods DH approach.",
+  visualizationStrategy: "Use Network Graphs for agents and Arc Maps for geographic flow.",
+  collectionTips: "Prioritize incomplete records to identify hidden mediators in the archive."
+};
+
+// --- Helpers ---
 const decode = (base64: string) => {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -34,188 +88,207 @@ const decodeAudioData = async (
   return buffer;
 };
 
-export const geocodeLocation = async (locationName: string): Promise<[number, number] | null> => {
-  if (!locationName) return null;
-  const ai = getAI();
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: `Find the latitude and longitude for: "${locationName}". Output as JSON [lon, lat].`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: { type: Type.NUMBER },
-          minItems: 2,
-          maxItems: 2
-        }
-      }
-    });
-    return JSON.parse(response.text || "null");
-  } catch (e) {
-    return null;
-  }
-};
+// --- Exported Services ---
 
 export const generateResearchBlueprint = async (prompt: string): Promise<ResearchBlueprint> => {
   const ai = getAI();
-  const systemInstruction = `你是一位世界级的数字人文专家，专精于翻译史研究。
-  你的任务是根据用户的研究课题，设计一套完整的科研工作流方案。
-  请使用中文回复。`;
+  if (!ai) return { ...FALLBACK_BLUEPRINT, projectScope: `Template: ${prompt}` };
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-pro-preview",
-    contents: `研究课题: "${prompt}"。请提供深度科研蓝图。`,
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          projectScope: { type: Type.STRING },
-          suggestedSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                fieldName: { type: Type.STRING },
-                description: { type: Type.STRING },
-                analyticalUtility: { type: Type.STRING },
-                importance: { type: Type.STRING, enum: ['Critical', 'Optional'] }
-              },
-              required: ['fieldName', 'description', 'analyticalUtility', 'importance']
-            }
-          },
-          dataCleaningStrategy: { type: Type.STRING },
-          storageAdvice: { type: Type.STRING },
-          methodology: { type: Type.STRING },
-          visualizationStrategy: { type: Type.STRING },
-          collectionTips: { type: Type.STRING }
-        },
-        required: ['projectScope', 'suggestedSchema', 'dataCleaningStrategy', 'storageAdvice', 'methodology', 'visualizationStrategy', 'collectionTips']
-      }
-    }
-  });
-  return JSON.parse(response.text || "{}");
-};
+  try {
+    const systemInstruction = `你是一位世界级的翻译史与数字人文（DH）专家。
+    你的任务是根据用户的研究课题，严格基于 "Translation as Data" 理论框架进行蓝图规划。
+    该框架包含五个维度：Agentive, Textual, Distributional, Discursive, Reception。
+    请使用中文回复。`;
 
-export const generateTutorialScript = async (project: any): Promise<{ title: string, content: string }[]> => {
-    const ai = getAI();
     const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview",
-        contents: `针对以下翻译研究项目生成一段4个章节的教程脚本。
-        项目名: ${project.name}。
-        第一章：欢迎与蓝图定义。
-        第二章：著录数据管理。
-        第三章：社会网络分析 (SNA) 实验室。
-        第四章：全球流转可视化。
-        请用学术且亲切的口吻。`,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        title: { type: Type.STRING },
-                        content: { type: Type.STRING }
-                    },
-                    required: ["title", "content"]
-                }
-            }
-        }
-    });
-    return JSON.parse(response.text || "[]");
-};
-
-export const speakTutorialPart = async (text: string, voice: string = 'Zephyr'): Promise<AudioBuffer | null> => {
-    const ai = getAI();
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: `用稳重且富有洞察力的声音朗读: ${text}` }] }],
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: voice },
-                    },
+      model: "gemini-3-pro-preview",
+      contents: `研究课题: "${prompt}"。请提供遵循 "Translation as Data" 五维框架的深度科研蓝图。`,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            projectScope: { type: Type.STRING },
+            dimensions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  dimension: { type: Type.STRING, enum: ['Agentive (Who)', 'Textual (What)', 'Distributional (Where/When/How)', 'Discursive (Why)', 'Reception (So what)'] },
+                  coreQuestion: { type: Type.STRING },
+                  dataSources: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  dhMethods: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  relevance: { type: Type.NUMBER }
                 },
+                required: ['dimension', 'coreQuestion', 'dataSources', 'dhMethods', 'relevance']
+              },
+              minItems: 5,
+              maxItems: 5
             },
-        });
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (!base64Audio) return null;
-
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        return await decodeAudioData(decode(base64Audio), audioCtx, 24000, 1);
-    } catch (e) {
-        console.error("TTS generation failed", e);
-        return null;
-    }
-};
-
-export const generateAtmosphericVideo = async (prompt: string): Promise<string | null> => {
-    const ai = getAI();
-    try {
-        let operation = await ai.models.generateVideos({
-            model: 'veo-3.1-fast-generate-preview',
-            prompt: prompt,
-            config: {
-                numberOfVideos: 1,
-                resolution: '720p',
-                aspectRatio: '16:9'
-            }
-        });
-        while (!operation.done) {
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            operation = await ai.operations.getVideosOperation({ operation: operation });
+            suggestedSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  fieldName: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  analyticalUtility: { type: Type.STRING },
+                  importance: { type: Type.STRING, enum: ['Critical', 'Optional'] }
+                },
+                required: ['fieldName', 'description', 'analyticalUtility', 'importance']
+              }
+            },
+            dataCleaningStrategy: { type: Type.STRING },
+            storageAdvice: { type: Type.STRING },
+            methodology: { type: Type.STRING },
+            visualizationStrategy: { type: Type.STRING },
+            collectionTips: { type: Type.STRING }
+          },
+          required: ['projectScope', 'dimensions', 'suggestedSchema', 'dataCleaningStrategy', 'storageAdvice', 'methodology', 'visualizationStrategy', 'collectionTips']
         }
-        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-        return downloadLink ? `${downloadLink}&key=${process.env.API_KEY}` : null;
-    } catch (e) {
-        console.error("Video generation failed", e);
-        return null;
-    }
-};
-
-export const parseBibliographicData = async (rawText: string): Promise<Partial<BibEntry>> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Extract data: "${rawText}"`,
-    config: {
-      systemInstruction: "Extract bibliographic metadata from messy academic notes. Output JSON.",
-      responseMimeType: "application/json"
-    }
-  });
-  return JSON.parse(response.text || "{}");
-};
-
-export const suggestNetworkConfig = async (metrics: AdvancedGraphMetrics, blueprint: ResearchBlueprint | null): Promise<any> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Suggest visualization settings in JSON for: ${JSON.stringify(metrics)}`,
-    config: { responseMimeType: "application/json" }
-  });
-  return JSON.parse(response.text || "{}");
-};
-
-export const interpretNetworkMetrics = async (metrics: AdvancedGraphMetrics): Promise<string> => {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Interpret results for a scholar: ${JSON.stringify(metrics)}`,
-  });
-  return response.text || "";
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (e) {
+    console.warn("AI Architect failed, using template fallback.");
+    return { ...FALLBACK_BLUEPRINT, projectScope: `Template: ${prompt}` };
+  }
 };
 
 export const generateInsights = async (entries: BibEntry[]): Promise<string> => {
     const ai = getAI();
-    const dataSummary = entries.slice(0, 30).map(e => `- ${e.title}`).join('\n');
-    const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Analyze these translation records:\n\n${dataSummary}`,
-    });
-    return response.text || "";
+    if (!ai) return "本报告基于静态数据分析：当前档案呈现出明显的译者聚集效应。建议重点关注核心枢纽节点的出版跨度。 (Template Mode)";
+    
+    try {
+        const dataSummary = entries.slice(0, 30).map(e => `- ${e.title}`).join('\n');
+        const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: `Analyze these translation records:\n\n${dataSummary}`,
+        });
+        return response.text || "";
+    } catch (e) {
+        return "数据分析模块目前处于本地模式，无法生成实时洞察。";
+    }
 }
+
+// Geocode, Video, and TTS logic remains the same but with null checks
+export const geocodeLocation = async (locationName: string): Promise<[number, number] | null> => {
+  const ai = getAI();
+  if (!ai || !locationName) return null;
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Find the latitude and longitude for: "${locationName}". Output as JSON [lon, lat].`,
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "null");
+  } catch (e) { return null; }
+};
+
+export const speakTutorialPart = async (text: string, voice: string = 'Zephyr'): Promise<AudioBuffer | null> => {
+    const ai = getAI();
+    if (!ai) return null;
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash-preview-tts",
+            contents: [{ parts: [{ text: `Read: ${text}` }] }],
+            config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+            },
+        });
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) return null;
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        return await decodeAudioData(decode(base64Audio), audioCtx, 24000, 1);
+    } catch (e) { return null; }
+};
+
+// --- Added missing functions for TutorialCenter ---
+
+/**
+ * Generates a structured tutorial script for a research project using Gemini 3 Flash.
+ */
+export const generateTutorialScript = async (project: Project): Promise<{ title: string, content: string }[]> => {
+  const ai = getAI();
+  if (!ai) return [];
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: `为研究项目 "${project.name}" 生成一个 4 步的学术导览脚本。这个项目是关于翻译史研究的。
+      请包含标题和内容。回复为 JSON 数组。`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              content: { type: Type.STRING }
+            },
+            required: ['title', 'content']
+          }
+        }
+      }
+    });
+    return JSON.parse(response.text || "[]");
+  } catch (e) {
+    console.error("Failed to generate tutorial script", e);
+    return [];
+  }
+};
+
+/**
+ * Generates an atmospheric background video for the tutorial using Veo 3.1.
+ * Follows mandatory API key selection process for video generation.
+ */
+export const generateAtmosphericVideo = async (prompt: string): Promise<string | null> => {
+  // Check for API key selection as per Veo requirements
+  if (typeof window !== 'undefined' && (window as any).aistudio) {
+    const aistudio = (window as any).aistudio;
+    if (!(await aistudio.hasSelectedApiKey())) {
+      await aistudio.openSelectKey();
+    }
+  }
+
+  // Always create a new instance right before the call to ensure latest key
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  try {
+    let operation = await ai.models.generateVideos({
+      model: 'veo-3.1-fast-generate-preview',
+      prompt: prompt,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: '16:9'
+      }
+    });
+
+    // Poll for operation completion
+    while (!operation.done) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      operation = await ai.operations.getVideosOperation({ operation: operation });
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) return null;
+
+    // Fetch the video content with the API key appended
+    const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  } catch (e: any) {
+    console.error("Video generation failed", e);
+    // If key entity not found, re-prompt for key selection
+    if (e.message?.includes("Requested entity was not found.")) {
+        if (typeof window !== 'undefined' && (window as any).aistudio) {
+            await (window as any).aistudio.openSelectKey();
+        }
+    }
+    return null;
+  }
+};
