@@ -11,7 +11,6 @@ interface NetworkGraphProps {
 }
 
 const CATEGORY_COLORS = d3.schemeTableau10;
-const COMMUNITY_COLORS = d3.schemeObservable10;
 const EDGE_COLORS: Record<EdgeType, string> = {
     TRANSLATION: '#6366f1', // Indigo
     PUBLICATION: '#10b981', // Emerald
@@ -148,6 +147,9 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     svg.selectAll("*").remove();
     svg.attr("width", dimensions.width).attr("height", dimensions.height);
 
+    // Background click to deselect node
+    svg.on("click", () => setSelectedNode(null));
+
     const g = svg.append("g");
     const zoom = d3.zoom<SVGSVGElement, any>().scaleExtent([0.05, 12]).on("zoom", (e) => g.attr("transform", e.transform));
     svg.call(zoom);
@@ -182,8 +184,9 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     node.append("circle")
       .attr("r", d => getRadius(d))
       .attr("fill", d => CATEGORY_COLORS[availableAttributes.findIndex(a => a.id === d.group) % 10])
-      .attr("stroke", "#fff").attr("stroke-width", 3)
-      .attr("class", "cursor-pointer hover:stroke-indigo-500 transition-all shadow-xl")
+      .attr("stroke", d => selectedNode?.id === d.id ? "#6366f1" : "#fff")
+      .attr("stroke-width", d => selectedNode?.id === d.id ? 6 : 3)
+      .attr("class", "cursor-pointer transition-all shadow-xl")
       .on("click", (e, d) => { e.stopPropagation(); setSelectedNode(d); });
 
     if (showLabels) {
@@ -199,7 +202,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     });
 
     return () => sim.stop();
-  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels]);
+  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels, selectedNode]);
 
   const toggleEdgeType = (type: EdgeType) => {
     setConfig(prev => ({
@@ -225,11 +228,33 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         ))}
       </div>
 
+      {/* Control Panel Toggle (Visible only when panel is closed) */}
+      {!isPanelOpen && (
+          <button 
+            onClick={() => setIsPanelOpen(true)} 
+            className="absolute top-12 right-12 z-[60] w-16 h-16 bg-slate-900 text-white rounded-[1.5rem] shadow-2xl flex items-center justify-center hover:scale-110 transition-all text-2xl ring-4 ring-white shadow-indigo-500/10"
+          >
+            ⚙️
+          </button>
+      )}
+
       {/* Control Panel */}
       <div className={`absolute top-0 right-0 h-full w-[380px] bg-white/95 backdrop-blur-2xl border-l border-slate-100 shadow-2xl transition-transform duration-500 z-50 flex flex-col ${isPanelOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-        <div className="flex bg-slate-50/50 border-b border-slate-100 p-2 shrink-0">
+        
+        {/* Panel Header with Internal Toggle */}
+        <div className="flex items-center justify-between p-6 bg-slate-50 border-b border-slate-100 shrink-0">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Lab Controls</h3>
+            <button 
+                onClick={() => setIsPanelOpen(false)} 
+                className="w-10 h-10 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 transition-all text-2xl shadow-sm"
+            >
+                &times;
+            </button>
+        </div>
+
+        <div className="flex bg-white border-b border-slate-100 p-2 shrink-0">
             {[{id:'topology',label:'Topology'},{id:'viz',label:'Viz'},{id:'sna',label:'Analysis'}].map(t => (
-                <button key={t.id} onClick={() => setActiveTab(t.id as any)} className={`flex-1 py-5 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-xl ${activeTab === t.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+                <button key={t.id} onClick={() => setActiveTab(t.id as any)} className={`flex-1 py-4 text-[10px] font-black uppercase tracking-[0.2em] transition-all rounded-xl ${activeTab === t.id ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>
                     {t.label}
                 </button>
             ))}
@@ -302,7 +327,11 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                         <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Degree Centrality / 活跃度排名</h4>
                         <div className="space-y-4">
                            {graphData.nodes.sort((a,b) => b.degree - a.degree).slice(0, 15).map((n, i) => (
-                              <div key={n.id} className="flex items-center gap-5 p-5 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm hover:shadow-md transition-shadow">
+                              <div 
+                                key={n.id} 
+                                onClick={(e) => { e.stopPropagation(); setSelectedNode(n); }}
+                                className={`flex items-center gap-5 p-5 border rounded-[1.5rem] transition-all cursor-pointer ${selectedNode?.id === n.id ? 'bg-indigo-50 border-indigo-200 shadow-md scale-[1.02]' : 'bg-white border-slate-100 shadow-sm hover:shadow-md'}`}
+                              >
                                  <span className="text-sm font-black text-slate-300">#{i+1}</span>
                                  <div className="flex-1 min-w-0">
                                     <p className="text-[12px] font-bold text-slate-800 truncate">{n.name}</p>
@@ -317,20 +346,34 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             )}
         </div>
 
+        {/* Selected Node Details Card (Metrics View) */}
         {selectedNode && (
-            <div className="m-8 p-10 bg-slate-900 text-white rounded-[3.5rem] shadow-2xl space-y-6 animate-slideUp relative flex-shrink-0 overflow-hidden">
+            <div className="m-8 p-10 bg-slate-900 text-white rounded-[3.5rem] shadow-2xl space-y-6 animate-slideUp relative flex-shrink-0 overflow-hidden ring-4 ring-indigo-500/10">
                 <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-500/20 blur-3xl -mr-20 -mt-20"></div>
-                <button onClick={() => setSelectedNode(null)} className="absolute top-8 right-10 text-4xl font-light hover:text-rose-400 transition-colors leading-none z-10">&times;</button>
+                
+                {/* Fixed Close Button for Metrics Card */}
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation(); // Prevent re-selecting from bubbles
+                        setSelectedNode(null);
+                    }} 
+                    className="absolute top-8 right-10 w-12 h-12 flex items-center justify-center rounded-full bg-white/10 hover:bg-rose-500 text-white text-3xl font-light transition-all leading-none z-[70] cursor-pointer active:scale-95"
+                    title="Close metrics"
+                >
+                    &times;
+                </button>
+
                 <div className="space-y-2 relative z-10">
                     <p className="text-[10px] uppercase text-indigo-400 tracking-widest font-black">{selectedNode.group}</p>
-                    <h4 className="text-3xl font-bold serif leading-tight pr-12">{selectedNode.name}</h4>
+                    <h4 className="text-3xl font-bold serif leading-tight pr-14">{selectedNode.name}</h4>
                 </div>
+                
                 <div className="grid grid-cols-2 gap-4 relative z-10">
-                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center">
+                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center border border-white/5">
                         <p className="text-[9px] uppercase text-slate-500 mb-2 tracking-widest">Tot. Degree</p>
                         <p className="text-2xl font-bold serif text-slate-300">{selectedNode.degree}</p>
                     </div>
-                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center">
+                    <div className="bg-white/5 p-5 rounded-[1.5rem] text-center border border-white/5">
                         <p className="text-[9px] uppercase text-slate-500 mb-2 tracking-widest">Flow (In/Out)</p>
                         <p className="text-2xl font-bold serif text-emerald-400">{selectedNode.inDegree}/{selectedNode.outDegree}</p>
                     </div>
@@ -338,8 +381,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             </div>
         )}
       </div>
-
-      <button onClick={() => setIsPanelOpen(!isPanelOpen)} className="absolute top-12 right-12 z-[60] w-16 h-16 bg-slate-900 text-white rounded-[1.5rem] shadow-2xl flex items-center justify-center hover:scale-110 transition-all text-2xl ring-4 ring-white shadow-indigo-500/10">{isPanelOpen ? '×' : '⚙️'}</button>
     </div>
   );
 };
