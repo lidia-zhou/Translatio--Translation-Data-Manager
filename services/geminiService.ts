@@ -7,7 +7,7 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-// --- Fallback Data / Expert Template (Full English) ---
+// --- Fallback Data / Expert Template ---
 const FALLBACK_BLUEPRINT: ResearchBlueprint = {
   projectScope: "Standard Translation Circulation Research (Heuristic Mode)",
   dimensions: [
@@ -58,7 +58,6 @@ const FALLBACK_BLUEPRINT: ResearchBlueprint = {
   collectionTips: "Prioritize paratextual sources to identify hidden mediators in the archive."
 };
 
-// --- Helpers ---
 const decode = (base64: string) => {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -90,15 +89,37 @@ const decodeAudioData = async (
 
 // --- Exported Services ---
 
+export const extractMetadataFromEntries = async (entries: {id: string, text: string}[]): Promise<Record<string, {city?: string, originalCity?: string}>> => {
+  const ai = getAI();
+  if (!ai) return {};
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Extract the primary publication city (Target Hub) and source city (Source Hub) for these bibliography entries. If a publisher is "Shanghai Translation Press", city is "Shanghai". Return JSON object where keys are entry IDs. \n\nEntries:\n${JSON.stringify(entries)}`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          additionalProperties: {
+             type: Type.OBJECT,
+             properties: {
+               city: { type: Type.STRING, description: "Target publication city" },
+               originalCity: { type: Type.STRING, description: "Source origin city" }
+             }
+          }
+        }
+      }
+    });
+    return JSON.parse(response.text || "{}");
+  } catch (e) { return {}; }
+}
+
 export const generateResearchBlueprint = async (prompt: string): Promise<ResearchBlueprint> => {
   const ai = getAI();
   if (!ai) return { ...FALLBACK_BLUEPRINT, projectScope: `Offline Inquiry: ${prompt}` };
 
   try {
-    const systemInstruction = `You are an expert in Digital Humanities and Translation History.
-    Generate a research blueprint following the "Translation as Data" framework (5 dimensions: Agentive, Textual, Distributional, Discursive, Reception).
-    Language Policy: OUTPUT MUST BE EXCLUSIVELY IN ENGLISH.
-    Focus on high-level scholarly ontological inquiries, data sources, and computational methods.`;
+    const systemInstruction = `You are an expert in Digital Humanities and Translation History. Generate a research blueprint in English.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
@@ -156,8 +177,7 @@ export const generateResearchBlueprint = async (prompt: string): Promise<Researc
 
 export const generateInsights = async (entries: BibEntry[]): Promise<string> => {
     const ai = getAI();
-    if (!ai) return "Synthesis generated from static metadata: The dataset shows clear clustering of mediators in urban hubs. Recommend further longitudinal GIS analysis. (Offline Logic Engaged)";
-    
+    if (!ai) return "Synthesis generated from static metadata.";
     try {
         const dataSummary = entries.slice(0, 30).map(e => `- ${e.title} (${e.publicationYear})`).join('\n');
         const response = await ai.models.generateContent({
@@ -166,7 +186,7 @@ export const generateInsights = async (entries: BibEntry[]): Promise<string> => 
         });
         return response.text || "";
     } catch (e) {
-        return "Synthesized insights currently unavailable in local mode.";
+        return "Synthesized insights currently unavailable.";
     }
 }
 

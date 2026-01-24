@@ -302,12 +302,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
 
     if (layout === 'radial') {
         const maxRadius = Math.min(centerX, centerY) * 0.9;
-        // Use PageRank or Degree to determine distance from center
         const extent = d3.extent(graphData.nodes, n => n.pageRank) as [number, number];
         const radiusScale = d3.scaleLinear().domain(extent).range([maxRadius, 50]);
-        
         sim.force("radial", d3.forceRadial(d => radiusScale((d as any).pageRank), centerX, centerY).strength(0.8));
-        sim.force("center", null); // Remove center force to allow radial to take over
+        sim.force("center", null);
     } else if (layout === 'clustered') {
         const groups = Array.from(new Set(graphData.nodes.map(n => n.group)));
         const groupCenters: Record<string, {x: number, y: number}> = {};
@@ -318,9 +316,16 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                 y: centerY + Math.sin(angle) * (centerY * 0.5)
             };
         });
-        
         sim.force("x", d3.forceX((d: any) => groupCenters[d.group].x).strength(0.5));
         sim.force("y", d3.forceY((d: any) => groupCenters[d.group].y).strength(0.5));
+    } else if (layout === 'forceAtlas2') {
+        // Approximate ForceAtlas2 behavior
+        // Stronger repulsive force, gravity towards center, and weight-based attraction
+        sim.force("charge", d3.forceManyBody().strength((d: any) => -1500 - (d.degree * 200)));
+        sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(d => 100 / Math.sqrt(d.weight || 1)).strength(0.1));
+        sim.force("gravity", d3.forceManyBody().strength(10)); // Slight global gravity
+        sim.force("center", d3.forceCenter(centerX, centerY));
+        sim.force("collide", d3.forceCollide().radius(d => 30 + (d as any).degree * 3).strength(0.2));
     }
 
     const link = g.append("g").selectAll("line").data(graphData.links).join("line")
@@ -334,19 +339,22 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
         .on("end", (e, d) => { if(!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
 
-    // Fix for Error: Type 'unknown' cannot be used as an index type.
-    // Explicitly casting metricKey to any ensures it's treated as a valid index for any-casted data objects.
+    // Fix: Explicitly cast the metric key to any to avoid index signature errors (Fixing line 314 error)
     const getRadius = (d: any) => {
         if (sizeBy === 'uniform') return (minSize + maxSize) / 2;
         const metricKey: any = sizeBy;
-        const extent = d3.extent(graphData.nodes, n => (n as any)[metricKey] as number) as [number, number];
-        const scale = d3.scaleSqrt().domain(extent[0] === extent[1] ? [0, extent[1] || 1] : extent).range([minSize, maxSize]);
-        return scale((d as any)[metricKey]);
+        const values = graphData.nodes.map(n => (n as any)[metricKey] as number);
+        const extentResult = d3.extent(values);
+        const minVal = extentResult[0] ?? 0;
+        const maxVal = extentResult[1] ?? 1;
+        const scale = d3.scaleSqrt()
+            .domain([minVal === maxVal ? 0 : minVal, maxVal || 1])
+            .range([minSize, maxSize]);
+        return scale((d as any)[metricKey] as number);
     };
 
     node.append("circle")
       .attr("r", (d: any) => getRadius(d))
-      // Fix: casting to any to avoid potential unknown inference in nested D3 calls
       .attr("fill", (d: any) => CATEGORY_COLORS[availableAttributes.findIndex(a => a.id === d.group) % 10])
       .attr("stroke", (d: any) => selectedNode?.id === d.id ? "#6366f1" : "#fff")
       .attr("stroke-width", (d: any) => selectedNode?.id === d.id ? 6 : 3)
@@ -381,6 +389,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                 <span className="text-[10px] font-bold uppercase tracking-tighter text-slate-600">{type}</span>
             </button>
         ))}
+        <div className="h-px bg-slate-100 my-2 w-full"></div>
+        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-300 serif italic text-center">
+            @Lidia Zhou Mengyuan
+        </p>
       </div>
 
       {!isPanelOpen && (
@@ -408,9 +420,19 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                         <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Layout Engine</h4>
                         <select value={layout} onChange={e => setLayout(e.target.value as any)} className="w-full p-5 bg-slate-900 text-white rounded-[1.5rem] border-none text-[11px] font-bold uppercase outline-none shadow-xl">
                             <option value="force">Force Directed / 引力布局</option>
+                            <option value="forceAtlas2">ForceAtlas2 / 力导向优化</option>
                             <option value="radial">Radial Hubs / 径向布局</option>
                             <option value="clustered">Clustered Roles / 聚类布局</option>
                         </select>
+                    </section>
+                    <section className="space-y-5">
+                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Relationship Direction</h4>
+                        <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
+                           <span className="text-[11px] font-bold text-slate-600 uppercase tracking-tighter">{config.isDirected ? 'Directed / 有向' : 'Undirected / 无向'}</span>
+                           <button onClick={() => setConfig({...config, isDirected: !config.isDirected})} className={`w-14 h-7 rounded-full transition-all relative ${config.isDirected ? 'bg-indigo-600 shadow-lg' : 'bg-slate-300'}`}>
+                              <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${config.isDirected ? 'left-8' : 'left-1'}`}></div>
+                           </button>
+                        </div>
                     </section>
                     <section className="space-y-5">
                         <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Participating Entities</h4>

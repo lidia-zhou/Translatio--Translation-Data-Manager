@@ -7,11 +7,24 @@ import StatsDashboard from './components/StatsDashboard';
 import WorldMap from './components/WorldMap';
 import GlobalFlowBackground from './components/GlobalFlowBackground';
 import TheoryLab from './components/TheoryLab';
-import { generateResearchBlueprint, generateInsights, geocodeLocation } from './services/geminiService';
+import { generateResearchBlueprint, generateInsights, geocodeLocation, extractMetadataFromEntries } from './services/geminiService';
 import { SAMPLE_ENTRIES, COORDS as LOCAL_COORDS } from './constants';
 
 const STORAGE_KEY_PROJECTS = 'transdata_core_v23_final';
 const STORAGE_KEY_ACTIVE_ID = 'transdata_active_id_v23_final';
+
+const heuristicCityExtract = (publisher: string): string | null => {
+    if (!publisher) return null;
+    const entities = [
+        "北京", "上海", "南京", "广州", "深圳", "成都", "重庆", "杭州", "西安", "澳门", "香港", "台北", "海口", "南宁", "石家庄", "武汉", "长沙", "济南", "天津", "长春", "昆明", 
+        "甘肃", "河北", "台湾", "广西", "山东", "贵州", "江苏", "浙江", "广东", "福建", "陕西", "四川", "云南", "湖南", "湖北", "河南", "山西", "安徽", "江西", "辽宁", "吉林", "黑龙江", "海南",
+        "Lisbon", "Porto", "Coimbra", "Braga", "Faro"
+    ];
+    for (const entity of entities) {
+        if (publisher.includes(entity)) return entity;
+    }
+    return null;
+};
 
 const resolveOfflineCoords = (name: string): [number, number] | null => {
     if (!name) return null;
@@ -123,16 +136,20 @@ function App() {
     else localStorage.removeItem(STORAGE_KEY_ACTIVE_ID);
   }, [activeProjectId]);
 
-  const createNewProject = (name: string, entries: BibEntry[] = [], blueprint?: ResearchBlueprint, customId?: string) => {
+  const createNewProject = (name: string, entries: BibEntry[] = [], blueprint?: ResearchBlueprint, customId?: string, autoDetectedCols: string[] = []) => {
     const entriesWithGIS = entries.map(e => {
         let meta = { ...e.customMetadata };
         if (!meta.sourceCoord) meta.sourceCoord = LOCAL_COORDS["portugal"]; 
         if (!meta.targetCoord) {
-            const coords = resolveOfflineCoords(e.city || '') || resolveOfflineCoords(e.provinceState || '');
+            const cityName = e.city || heuristicCityExtract(e.publisher) || '';
+            const coords = resolveOfflineCoords(cityName);
             if (coords) meta.targetCoord = coords;
+            if (!e.city && cityName) e.city = cityName; 
         }
         return { ...e, customMetadata: meta };
     });
+
+    const finalCols = Array.from(new Set([...(blueprint?.suggestedSchema.map(s => s.fieldName) || []), ...autoDetectedCols]));
 
     const newProj: Project = { 
         id: customId || `proj-${Date.now()}`, 
@@ -140,7 +157,7 @@ function App() {
         lastModified: Date.now(), 
         entries: entriesWithGIS, 
         blueprint: blueprint || null,
-        customColumns: blueprint?.suggestedSchema.map(s => s.fieldName) || []
+        customColumns: finalCols
     };
     setProjects(prev => [newProj, ...prev]);
     setActiveProjectId(newProj.id);
@@ -155,6 +172,70 @@ function App() {
               entries: p.entries.map(e => e.id === id ? { ...e, ...updates } : e)
           };
       }));
+  };
+
+  const deleteEntry = (id: string) => {
+      if (!window.confirm("Delete this record? / 确定删除这条记录？")) return;
+      setProjects(prev => prev.map(p => {
+          if (p.id !== activeProjectId) return p;
+          return {
+              ...p,
+              entries: p.entries.filter(e => e.id !== id)
+          };
+      }));
+  };
+
+  const addNewEntry = () => {
+      if (!activeProject) return;
+      const newEntry: BibEntry = {
+          id: `manual-${Date.now()}`,
+          title: 'New Translation / 新记录',
+          publicationYear: new Date().getFullYear(),
+          author: { name: 'Unknown', gender: Gender.UNKNOWN },
+          translator: { name: 'Unknown', gender: Gender.UNKNOWN },
+          publisher: 'Unknown',
+          city: '',
+          originalCity: 'Portugal',
+          sourceLanguage: 'Portuguese',
+          targetLanguage: 'Chinese',
+          customMetadata: { sourceCoord: LOCAL_COORDS["portugal"] }
+      };
+      setProjects(prev => prev.map(p => p.id === activeProject.id ? {
+          ...p,
+          entries: [newEntry, ...p.entries]
+      } : p));
+  };
+
+  const updateEntryMetadata = (id: string, field: string, value: any) => {
+      setProjects(prev => prev.map(p => {
+          if (p.id !== activeProjectId) return p;
+          return {
+              ...p,
+              entries: p.entries.map(e => e.id === id ? { 
+                  ...e, 
+                  customMetadata: { ...e.customMetadata, [field]: value } 
+              } : e)
+          };
+      }));
+  };
+
+  const addCustomColumn = () => {
+      if (!activeProject) return;
+      const name = prompt("Enter new column name (e.g., Patronage, Style, Institution):");
+      if (name) {
+          setProjects(prev => prev.map(p => p.id === activeProject.id ? {
+              ...p,
+              customColumns: [...(p.customColumns || []), name]
+          } : p));
+      }
+  };
+
+  const removeCustomColumn = (colName: string) => {
+      if (!activeProject || !window.confirm(`Remove column "${colName}"? / 确定移除列 "${colName}"？`)) return;
+      setProjects(prev => prev.map(p => p.id === activeProject.id ? {
+          ...p,
+          customColumns: (p.customColumns || []).filter(c => c !== colName)
+      } : p));
   };
 
   const handleManualSourceHubChange = async (id: string, cityName: string) => {
@@ -181,7 +262,7 @@ function App() {
       }
       
       if (!coords) {
-          alert("Location not found in local cache. Please try a major city name like 'Lisbon' or 'Porto'.");
+          alert("Location not found in local cache.");
           return;
       }
 
@@ -225,9 +306,9 @@ function App() {
         setProjects(prev => prev.map(p => p.id === activeProject.id ? { 
             ...p, 
             blueprint: bp,
-            customColumns: Array.from(new Set([...p.customColumns, ...bp.suggestedSchema.map(s => s.fieldName)]))
+            customColumns: Array.from(new Set([...(p.customColumns || []), ...bp.suggestedSchema.map(s => s.fieldName)]))
         } : p));
-    } catch (e) { alert("AI Architect failed to generate lab blueprint."); }
+    } catch (e) { alert("AI Architect failed."); }
     finally { setIsArchitecting(false); }
   };
 
@@ -236,28 +317,63 @@ function App() {
     setIsGeocoding(true);
     const hasAPI = !!process.env.API_KEY;
     const updatedEntries = [...activeProject.entries];
-    let count = 0;
+    
+    if (hasAPI) {
+      const missingLocations = updatedEntries
+        .filter(e => !e.city || !e.originalCity)
+        .map(e => ({ id: e.id, text: `${e.title} - ${e.publisher}` }));
+      
+      if (missingLocations.length > 0) {
+        const enrichment = await extractMetadataFromEntries(missingLocations);
+        updatedEntries.forEach((e, idx) => {
+           if (enrichment[e.id]) {
+              updatedEntries[idx] = { 
+                ...e, 
+                city: e.city || enrichment[e.id].city || heuristicCityExtract(e.publisher) || '', 
+                originalCity: e.originalCity || enrichment[e.id].originalCity || ''
+              };
+           }
+        });
+      }
+    } else {
+        updatedEntries.forEach((e, idx) => {
+            if (!e.city) updatedEntries[idx].city = heuristicCityExtract(e.publisher) || '';
+        });
+    }
 
+    let count = 0;
     for (let i = 0; i < updatedEntries.length; i++) {
         const entry = updatedEntries[i];
-        const locationName = entry.city || entry.provinceState;
-        if (locationName && !entry.customMetadata?.targetCoord) {
-            setProcessingIdx(i);
-            let coords = resolveOfflineCoords(entry.city || '') || resolveOfflineCoords(entry.provinceState || '');
-            if (!coords && hasAPI) {
-                coords = await geocodeLocation(locationName);
-            }
+        const targetLoc = entry.city;
+        const sourceLoc = entry.originalCity;
+
+        setProcessingIdx(i);
+        
+        if (targetLoc && !entry.customMetadata?.targetCoord) {
+            let coords = resolveOfflineCoords(targetLoc);
+            if (!coords && hasAPI) coords = await geocodeLocation(targetLoc);
             if (coords) {
-                updatedEntries[i] = { ...entry, customMetadata: { ...entry.customMetadata, targetCoord: coords } };
+                updatedEntries[i].customMetadata = { ...updatedEntries[i].customMetadata, targetCoord: coords };
                 count++;
-                setProjects(prev => prev.map(p => p.id === activeProject.id ? { ...p, entries: updatedEntries } : p));
-                await new Promise(r => setTimeout(r, 50));
             }
         }
+
+        if (sourceLoc && !entry.customMetadata?.sourceCoord) {
+            let coords = resolveOfflineCoords(sourceLoc);
+            if (!coords && hasAPI) coords = await geocodeLocation(sourceLoc);
+            if (coords) {
+                updatedEntries[i].customMetadata = { ...updatedEntries[i].customMetadata, sourceCoord: coords };
+            }
+        }
+        
+        if (i % 5 === 0) setProjects(prev => prev.map(p => p.id === activeProject.id ? { ...p, entries: [...updatedEntries] } : p));
+        await new Promise(r => setTimeout(r, 20));
     }
+
+    setProjects(prev => prev.map(p => p.id === activeProject.id ? { ...p, entries: updatedEntries } : p));
     setProcessingIdx(null);
     setIsGeocoding(false);
-    alert(`GIS Mapping Complete: ${count} locations resolved.`);
+    alert(`Automation Complete: Linked ${count} geographical nodes.`);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -271,30 +387,90 @@ function App() {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rawData = XLSX.utils.sheet_to_json(ws) as any[];
         
+        if (rawData.length === 0) return;
+
+        // Key header variants for identification
+        const YEAR_KEYS = ['year', 'pubyear', 'date', '年份', '出版年份', '出版时间', '出版日期', '时间'];
+        const TITLE_KEYS = ['title', 'work', 'book', '书名', '题名', '名称', '作品'];
+        const CITY_KEYS = ['city', 'location', 'place', 'pubplace', '城市', '出版地', '出版城市', '地点', '地名'];
+        const PROVINCE_KEYS = ['province', 'state', 'region', '省份', '省', '州', '地区', '省/州'];
+        const SOURCE_KEYS = ['originalcity', 'sourcecity', 'source', '原语地', '源语地', '原产地', '来源地'];
+        const PUBLISHER_KEYS = ['publisher', 'press', '出版社', '出版单位', '出版机构'];
+        const AUTHOR_KEYS = ['author', 'writer', '著者', '作者', '原著', '作家'];
+        const TRANSLATOR_KEYS = ['translator', 'trans', '译者', '翻译', '译述', '译'];
+
+        const findKey = (row: any, variants: string[]): string | null => {
+            const keys = Object.keys(row);
+            return keys.find(k => variants.some(v => k.toLowerCase().includes(v.toLowerCase()))) || null;
+        };
+
+        const customColsSet = new Set<string>();
+
         const parsed: BibEntry[] = rawData.map((row, idx) => {
-          const city = (row.City || row.city || row['城市'] || '').toString().trim();
-          const province = (row.Province || row.province || row['省份'] || '').toString().trim();
-          const sourceCity = (row.OriginalCity || row.sourceCity || 'Portugal').toString().trim();
-          const offlineCoords = resolveOfflineCoords(city) || resolveOfflineCoords(province);
+          const titleKey = findKey(row, TITLE_KEYS);
+          const yearKey = findKey(row, YEAR_KEYS);
+          const cityKey = findKey(row, CITY_KEYS);
+          const provinceKey = findKey(row, PROVINCE_KEYS);
+          const sourceKey = findKey(row, SOURCE_KEYS);
+          const publisherKey = findKey(row, PUBLISHER_KEYS);
+          const authorKey = findKey(row, AUTHOR_KEYS);
+          const translatorKey = findKey(row, TRANSLATOR_KEYS);
+
+          const publisher = String(publisherKey ? row[publisherKey] : '').trim();
+          
+          // CRITICAL: Merge City and Province/State information
+          const rawCity = (cityKey ? String(row[cityKey]) : '').trim();
+          const rawProvince = (provinceKey ? String(row[provinceKey]) : '').trim();
+          let city = '';
+          if (rawProvince && rawCity) {
+              city = rawProvince.includes(rawCity) ? rawProvince : `${rawProvince}, ${rawCity}`;
+          } else if (rawProvince) {
+              city = rawProvince;
+          } else if (rawCity) {
+              city = rawCity;
+          } else {
+              city = heuristicCityExtract(publisher) || '';
+          }
+
+          const sourceCity = (sourceKey ? String(row[sourceKey]) : 'Portugal').trim();
+          
+          const rawYear = String(yearKey ? row[yearKey] : '');
+          const cleanYearMatch = rawYear.match(/\d{4}/);
+          const yearValue = cleanYearMatch ? parseInt(cleanYearMatch[0]) : 2024;
+
+          const offlineCoords = resolveOfflineCoords(rawCity) || resolveOfflineCoords(rawProvince) || resolveOfflineCoords(city);
           const sourceCoords = resolveOfflineCoords(sourceCity) || LOCAL_COORDS["portugal"];
+
+          const matchedKeys = [titleKey, yearKey, cityKey, provinceKey, sourceKey, publisherKey, authorKey, translatorKey].filter(Boolean);
+          const extraMetadata: Record<string, any> = { targetCoord: offlineCoords, sourceCoord: sourceCoords };
+          
+          Object.keys(row).forEach(k => {
+              if (!matchedKeys.includes(k)) {
+                  extraMetadata[k] = row[k];
+                  customColsSet.add(k);
+              }
+          });
 
           return {
             id: `imp-${Date.now()}-${idx}`,
-            title: String(row.Title || row.title || row['书名'] || 'Untitled'),
-            publicationYear: parseInt(row.Year || row.year || row['年份']) || 2024,
-            author: { name: String(row.Author || row.author || row['著者'] || 'Unknown'), gender: Gender.UNKNOWN },
-            translator: { name: String(row.Translator || row.translator || row['译者'] || 'Unknown'), gender: Gender.UNKNOWN },
-            publisher: String(row.Publisher || row.publisher || row['出版社'] || 'N/A'),
+            title: String(titleKey ? row[titleKey] : 'Untitled').trim(),
+            publicationYear: yearValue,
+            author: { name: String(authorKey ? row[authorKey] : 'Unknown').trim(), gender: Gender.UNKNOWN },
+            translator: { name: String(translatorKey ? row[translatorKey] : 'Unknown').trim(), gender: Gender.UNKNOWN },
+            publisher: publisher,
             city: city,
             originalCity: sourceCity,
-            provinceState: province,
-            sourceLanguage: row.SourceLanguage || row.sourceLanguage || 'N/A',
-            targetLanguage: row.TargetLanguage || row.targetLanguage || 'N/A',
-            customMetadata: { targetCoord: offlineCoords, sourceCoord: sourceCoords }
+            sourceLanguage: 'N/A',
+            targetLanguage: 'N/A',
+            customMetadata: extraMetadata
           };
         });
-        createNewProject(`Import: ${file.name}`, parsed);
-      } catch (err) { alert("Import Failed."); }
+
+        createNewProject(`Import: ${file.name}`, parsed, undefined, undefined, Array.from(customColsSet));
+      } catch (err) { 
+          console.error(err);
+          alert("Import Failed. Please check file format."); 
+      }
     };
     reader.readAsBinaryString(file);
   };
@@ -314,109 +490,64 @@ function App() {
             </p>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-6xl mb-12">
-                {/* AI ARCHITECT MODULE */}
-                <div 
-                  className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500"
-                  onClick={() => setShowArchitectPrompt(true)}
-                >
+                <div className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500" onClick={() => setShowArchitectPrompt(true)}>
                     <div className="space-y-6">
                         <div className="text-4xl bg-indigo-50 w-20 h-20 rounded-[2rem] flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-500">🏗️</div>
                         <div className="space-y-1">
                             <h3 className="text-xl font-bold serif text-slate-800">AI Architect</h3>
                             <h3 className="text-lg font-bold serif text-slate-600">AI 架构师</h3>
                             <p className="text-[9px] text-slate-400 font-serif italic tracking-widest uppercase pt-2">Data Schema Design (数据模型设计)</p>
-                            <div className="pt-4 space-y-1">
-                              <p className="text-xs text-slate-600 leading-relaxed">设计项目专属的数据库列名与自定义字段。</p>
-                              <p className="text-xs text-slate-400 leading-relaxed font-serif italic">Design project-specific database columns and custom fields.</p>
-                            </div>
                         </div>
                     </div>
-                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                      <span className="block">Design Schema</span>
-                      <span className="block opacity-60">启动架构 →</span>
-                    </button>
+                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-indigo-600 group-hover:text-white transition-all">Design Schema</button>
                 </div>
 
-                {/* DATA PIPELINE MODULE */}
-                <div 
-                   className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500"
-                   onClick={() => fileInputRef.current?.click()}
-                >
+                <div className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500" onClick={() => fileInputRef.current?.click()}>
                     <div className="space-y-6">
                         <div className="text-4xl bg-rose-50 w-20 h-20 rounded-[2rem] flex items-center justify-center group-hover:bg-rose-600 group-hover:text-white transition-colors duration-500">📥</div>
                         <div className="space-y-1">
                             <h3 className="text-xl font-bold serif text-slate-800">Data Pipeline</h3>
                             <h3 className="text-lg font-bold serif text-slate-600">数据管道</h3>
                             <p className="text-[9px] text-slate-400 font-serif italic tracking-widest uppercase pt-2">Batch Import (数据批量导入)</p>
-                            <div className="pt-4 space-y-1">
-                              <p className="text-xs text-slate-600 leading-relaxed">一键上传 Excel 记录并自动提取实体。</p>
-                              <p className="text-xs text-slate-400 leading-relaxed font-serif italic">Upload Excel datasets with automated entity extraction.</p>
-                            </div>
                         </div>
                     </div>
-                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-rose-600 group-hover:text-white transition-all">
-                      <span className="block">Upload Dataset</span>
-                      <span className="block opacity-60">导入数据 →</span>
-                    </button>
+                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-rose-600 group-hover:text-white transition-all">Upload Dataset</button>
                 </div>
 
-                {/* METHODOLOGY LAB MODULE */}
-                <div 
-                   className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500"
-                   onClick={() => setShowTheoryLab(true)}
-                >
+                <div className="bg-white/70 backdrop-blur-xl p-10 rounded-[3rem] border border-white shadow-lg hover:shadow-2xl transition-all ring-1 ring-slate-100 flex flex-col justify-between text-left group cursor-pointer hover:-translate-y-2 duration-500" onClick={() => setShowTheoryLab(true)}>
                     <div className="space-y-6">
                         <div className="text-4xl bg-emerald-50 w-20 h-20 rounded-[2rem] flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors duration-500">🔬</div>
                         <div className="space-y-1">
                             <h3 className="text-xl font-bold serif text-slate-800">Methodology Lab</h3>
                             <h3 className="text-lg font-bold serif text-slate-600">研究方法室</h3>
                             <p className="text-[9px] text-slate-400 font-serif italic tracking-widest uppercase pt-2">TAD Research Framework (TAD 研究框架)</p>
-                            <div className="pt-4 space-y-1">
-                              <p className="text-xs text-slate-600 leading-relaxed">基于“翻译即数据”五维模型，规划您的数字化研究路径。</p>
-                              <p className="text-xs text-slate-400 leading-relaxed font-serif italic">Plan your digital research path based on the 5D TAD framework.</p>
-                            </div>
                         </div>
                     </div>
-                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-emerald-600 group-hover:text-white transition-all">
-                      <span className="block">Plan Strategy</span>
-                      <span className="block opacity-60">规划策略 →</span>
-                    </button>
+                    <button className="mt-8 w-full py-4 bg-slate-50 text-slate-400 rounded-2xl text-[9px] font-black uppercase tracking-widest group-hover:bg-emerald-600 group-hover:text-white transition-all">Plan Strategy</button>
                 </div>
             </div>
 
             <div className="w-full max-w-5xl flex flex-col md:flex-row gap-6 items-center justify-center">
-                <div 
-                    className="flex-1 bg-indigo-50/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-indigo-100/50 flex items-center justify-between group cursor-pointer hover:bg-indigo-600 transition-all shadow-sm" 
-                    onClick={() => createNewProject("Portuguese-Chinese Sample Project", SAMPLE_ENTRIES, undefined, "sample-pcc")}
-                >
+                <div className="flex-1 bg-indigo-50/50 backdrop-blur-md p-6 rounded-[2.5rem] border border-indigo-100/50 flex items-center justify-between group cursor-pointer hover:bg-indigo-600 transition-all shadow-sm" onClick={() => createNewProject("Portuguese-Chinese Sample Project", SAMPLE_ENTRIES, undefined, "sample-pcc")}>
                     <div className="flex items-center gap-6">
                         <span className="text-3xl">📖</span>
                         <div className="text-left space-y-1">
                             <h4 className="text-sm font-bold serif group-hover:text-white transition-colors">Explore Sample Project</h4>
-                            <h4 className="text-xs font-bold serif group-hover:text-white/80 transition-colors opacity-70">葡汉翻译数据集样本</h4>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-hover:text-indigo-100 transition-colors pt-1">History records circulation. / 历史流转样本。</p>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 group-hover:text-indigo-100 transition-colors pt-1">History records circulation.</p>
                         </div>
                     </div>
-                    <button className="px-8 py-3 bg-white rounded-full text-[9px] font-black uppercase tracking-widest border border-indigo-50 shadow-sm group-hover:scale-105 transition-all text-indigo-600">
-                      Enter Lab / 进入实验室 →
-                    </button>
+                    <button className="px-8 py-3 bg-white rounded-full text-[9px] font-black uppercase tracking-widest border border-indigo-50 shadow-sm group-hover:scale-105 transition-all text-indigo-600">Enter Lab →</button>
                 </div>
 
                 <div className="flex items-center gap-4">
                     <button onClick={() => setShowProjectOverlay(true)} className="flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl active:scale-95 hover:bg-indigo-500 transition-all">
-                      <span>📓</span> 
-                      <div className="text-left leading-none">
-                        <span className="block">Archive ({projects.length})</span>
-                        <span className="block text-[8px] opacity-60">项目存档</span>
-                      </div>
+                      <span>📓</span> <span>Archive ({projects.length})</span>
                     </button>
                 </div>
             </div>
 
             <footer className="mt-16 py-8 border-t border-slate-200/50 w-full max-w-xl text-center">
-              <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-300 serif italic">
-                @Lidia Zhou Mengyuan
-              </p>
+              <p className="text-[11px] font-black uppercase tracking-[0.5em] text-slate-300 serif italic">@Lidia Zhou Mengyuan</p>
             </footer>
         </div>
 
@@ -426,26 +557,15 @@ function App() {
                     <div className="flex justify-between items-start">
                         <div className="space-y-1">
                             <h3 className="text-3xl font-bold serif text-slate-900">Lab Schema Architect</h3>
-                            <h3 className="text-2xl font-bold serif text-slate-500">实验室架构师</h3>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 italic pt-2">Designing your research database / 正在设计您的研究数据库</p>
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 italic pt-2">Designing your research database</p>
                         </div>
                         <button onClick={() => setShowArchitectPrompt(false)} className="text-5xl font-light text-slate-200 hover:text-rose-500 transition-colors leading-none">&times;</button>
                     </div>
-                    <textarea 
-                        value={projectInput} 
-                        onChange={e => setProjectInput(e.target.value)} 
-                        placeholder="Define your archive's scope... / 描述您的课题范围..." 
-                        className="w-full h-40 bg-slate-50 border border-slate-100 rounded-[2rem] p-8 text-lg font-serif italic outline-none focus:ring-8 ring-indigo-50 transition-all resize-none shadow-inner"
-                        autoFocus
-                    />
+                    <textarea value={projectInput} onChange={e => setProjectInput(e.target.value)} placeholder="Define your archive's scope..." className="w-full h-40 bg-slate-50 border border-slate-100 rounded-[2rem] p-8 text-2xl font-serif italic outline-none focus:ring-8 ring-indigo-50 transition-all resize-none shadow-inner" autoFocus />
                     <div className="flex gap-4">
-                        <button onClick={() => setShowArchitectPrompt(false)} className="flex-1 py-6 bg-slate-100 rounded-[2rem] text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-slate-200 transition-all">Cancel / 取消</button>
-                        <button 
-                            onClick={handleArchitectBuild} 
-                            disabled={isArchitecting || !projectInput.trim()}
-                            className="flex-2 py-6 bg-indigo-600 text-white rounded-[2rem] text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-all disabled:opacity-50"
-                        >
-                            {isArchitecting ? 'Architecting Schema...' : 'Deploy Schema / 部署架构 →'}
+                        <button onClick={() => setShowArchitectPrompt(false)} className="flex-1 py-6 bg-slate-100 rounded-[2rem] text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-slate-200 transition-all">Cancel</button>
+                        <button onClick={handleArchitectBuild} disabled={isArchitecting || !projectInput.trim()} className="flex-2 py-6 bg-indigo-600 text-white rounded-[2rem] text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-all disabled:opacity-50">
+                            {isArchitecting ? 'Architecting Schema...' : 'Deploy Schema →'}
                         </button>
                     </div>
                 </div>
@@ -471,16 +591,14 @@ function App() {
              </div>
           </div>
           <nav className="flex space-x-1 bg-slate-100 p-1.5 rounded-2xl shadow-inner">
-            {['list', 'network', 'stats', 'map', 'blueprint']
-              .filter(m => !(m === 'blueprint' && isSampleProjectActive))
-              .map(m => (
+            {['list', 'network', 'stats', 'map', 'blueprint'].filter(m => !(m === 'blueprint' && isSampleProjectActive)).map(m => (
                 <button key={m} onClick={() => setViewMode(m as any)} className={`px-8 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${viewMode === m ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
                     {m === 'list' ? 'Archive' : m === 'network' ? 'Network' : m === 'stats' ? 'Stats' : m === 'map' ? 'GIS Lab' : 'Framework'}
                 </button>
             ))}
           </nav>
           <div className="flex items-center gap-4">
-             <button onClick={handleRepairGIS} disabled={isGeocoding} className="px-6 py-3 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all shadow-sm">{isGeocoding ? '📍 Resolving GIS...' : '📍 Repair GIS'}</button>
+             <button onClick={handleRepairGIS} disabled={isGeocoding} className="px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-xl">{isGeocoding ? '📍 Linking Geography...' : '🔗 Auto-Link Archives'}</button>
              <button onClick={() => fileInputRef.current?.click()} className="bg-slate-900 text-white px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 shadow-md">Import</button>
           </div>
         </div>
@@ -495,28 +613,11 @@ function App() {
                           <div className="space-y-4 text-center">
                               <div className="w-20 h-20 bg-rose-50 rounded-[2rem] flex items-center justify-center text-4xl mx-auto shadow-inner text-rose-500">🌐</div>
                               <h3 className="text-4xl font-bold serif text-slate-900">Batch Set Global Source Hub</h3>
-                              <p className="text-xs font-bold uppercase tracking-widest text-slate-400 italic">This will update all {activeProject?.entries.length} entries to the same origin point.</p>
                           </div>
-                          <div className="space-y-6">
-                              <label className="text-[11px] font-black uppercase tracking-widest text-slate-500 ml-4">Target Source Point (e.g. Portugal, Paris, Lisbon)</label>
-                              <input 
-                                value={bulkSourceCity} 
-                                onChange={e => setBulkSourceCity(e.target.value)}
-                                className="w-full p-8 bg-slate-50 rounded-[2rem] border border-slate-200 text-2xl font-bold serif outline-none focus:ring-8 ring-rose-50 transition-all shadow-inner" 
-                                placeholder="Common: Portugal, Lisbon, Porto..."
-                                autoFocus
-                              />
-                              <div className="flex flex-wrap gap-2 px-4">
-                                  {['Portugal', 'Lisbon', 'Porto', 'Coimbra'].map(s => (
-                                      <button key={s} onClick={() => setBulkSourceCity(s)} className="px-4 py-2 bg-slate-100 hover:bg-rose-100 rounded-full text-[10px] font-bold text-slate-500 hover:text-rose-600 transition-all border border-slate-200">
-                                          {s}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
+                          <input value={bulkSourceCity} onChange={e => setBulkSourceCity(e.target.value)} className="w-full p-8 bg-slate-50 rounded-[2rem] border border-slate-200 text-2xl font-bold serif outline-none focus:ring-8 ring-rose-50 transition-all shadow-inner" placeholder="e.g. Portugal" autoFocus />
                           <div className="flex gap-4 pt-4">
                               <button onClick={() => setShowBulkSourceHubModal(false)} className="flex-1 py-6 bg-slate-100 rounded-[2rem] text-[11px] font-black uppercase tracking-widest text-slate-400 hover:bg-slate-200 transition-all">Cancel</button>
-                              <button onClick={handleBulkSourceHubApply} className="flex-1 py-6 bg-rose-600 text-white rounded-[2rem] text-[11px] font-black uppercase tracking-widest shadow-2xl shadow-rose-200 hover:bg-rose-700 transition-all active:scale-95">Set All Sources</button>
+                              <button onClick={handleBulkSourceHubApply} className="flex-1 py-6 bg-rose-600 text-white rounded-[2rem] text-[11px] font-black uppercase tracking-widest shadow-2xl shadow-rose-200 hover:bg-rose-700 transition-all">Set All Sources</button>
                           </div>
                       </div>
                   </div>
@@ -529,80 +630,87 @@ function App() {
                             <h2 className="text-5xl font-bold serif text-slate-900">Bibliographic Archive</h2>
                             <p className="text-xs text-slate-400 font-serif italic">Management of translation records and spatial mediators.</p>
                         </div>
-                        <div className="flex gap-3">
-                            <button onClick={() => setShowBulkSourceHubModal(true)} className="px-8 py-4 bg-white border border-rose-200 text-rose-600 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-rose-50 transition-all shadow-xl shadow-rose-100 flex items-center gap-3">
-                                <span className="text-xl">🌍</span> Global Source Hub / 一键原语
-                            </button>
+                        <div className="flex gap-4">
+                            <button onClick={addNewEntry} className="px-8 py-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-indigo-600 transition-all shadow-xl flex items-center gap-3">➕ Add New Entry</button>
+                            <button onClick={addCustomColumn} className="px-8 py-4 bg-indigo-50 border border-indigo-200 text-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-indigo-100 transition-all shadow-xl shadow-indigo-100 flex items-center gap-3">📝 Define Dimension</button>
+                            <button onClick={() => setShowBulkSourceHubModal(true)} className="px-8 py-4 bg-white border border-rose-200 text-rose-600 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-rose-50 transition-all shadow-xl shadow-rose-100 flex items-center gap-3">🌍 Set Global Source</button>
                         </div>
                     </div>
                     <div className="flex items-center gap-4">
-                        <div className="text-[9px] font-bold text-slate-300 uppercase tracking-widest mr-4">Records Count: {activeProject?.entries.length}</div>
+                        <div className="text-[9px] font-bold text-slate-300 uppercase tracking-widest mr-4">Records: {activeProject?.entries.length}</div>
                         <input className="w-96 p-5 bg-white rounded-[1.5rem] border border-slate-200 text-sm outline-none shadow-sm focus:ring-4 ring-indigo-50 transition-all" placeholder="Search archive..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                     </div>
                 </div>
                 
-                <div className="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-hidden mb-20 ring-1 ring-slate-100">
-                    <table className="w-full text-left">
+                <div className="bg-white rounded-[3rem] border border-slate-100 shadow-2xl overflow-x-auto mb-20 ring-1 ring-slate-100 custom-scrollbar">
+                    <table className="w-full text-left min-w-[1300px]">
                       <thead className="bg-slate-50/50 text-[10px] font-black uppercase text-slate-400 tracking-[0.2em] border-b border-slate-100">
                         <tr>
-                            <th className="p-8">Work Title</th>
-                            <th className="p-8 text-rose-500">Source Hub (Origin) / 原语地</th>
-                            <th className="p-8 text-indigo-500">Target Hub (Publish) / 译语地</th>
-                            <th className="p-8 text-slate-600">Translator</th>
-                            <th className="p-8 text-center">GIS Link</th>
-                            <th className="p-8 text-right">Year</th>
+                            <th className="p-8 whitespace-nowrap">Work Title / 译作名称</th>
+                            <th className="p-8 text-slate-600 whitespace-nowrap">Year / 年份</th>
+                            <th className="p-8 text-rose-500 whitespace-nowrap">Source Hub / 原语地</th>
+                            <th className="p-8 text-indigo-500 whitespace-nowrap">Publication Place / 出版地</th>
+                            <th className="p-8 text-slate-600 whitespace-nowrap">Publisher / 出版社</th>
+                            <th className="p-8 text-slate-600 whitespace-nowrap">Translator / 译者</th>
+                            {activeProject?.customColumns?.map(col => (
+                                <th key={col} className="p-8 text-emerald-600 whitespace-nowrap uppercase group">
+                                  <div className="flex items-center justify-between gap-4">
+                                    <span>{col}</span>
+                                    <button onClick={() => removeCustomColumn(col)} className="w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all hover:scale-125 shadow-sm text-[8px]">&times;</button>
+                                  </div>
+                                </th>
+                            ))}
+                            <th className="p-8 text-center whitespace-nowrap">Ops</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50 font-serif text-lg text-slate-700">
-                        {activeProject?.entries.filter(e => e.title.toLowerCase().includes(searchTerm.toLowerCase()) || e.translator.name.toLowerCase().includes(searchTerm.toLowerCase()) || e.author.name.toLowerCase().includes(searchTerm.toLowerCase())).map((e, i) => (
-                          <tr key={e.id} className="hover:bg-indigo-50/5 transition-all duration-300">
-                            <td className="p-8 font-bold text-slate-900 truncate max-w-xs">{e.title}</td>
-                            <td className="p-8 group relative">
-                                <div className="flex items-center gap-2">
-                                    <input 
-                                        className="bg-transparent border-b border-transparent hover:border-rose-200 focus:border-rose-400 outline-none w-full text-rose-600 font-bold transition-all py-1"
-                                        value={e.originalCity || ''}
-                                        placeholder="Type city..."
-                                        onBlur={(evt) => handleManualSourceHubChange(e.id, evt.target.value)}
-                                        onChange={(evt) => updateEntry(e.id, { originalCity: evt.target.value })}
-                                    />
-                                    {e.customMetadata?.sourceCoord && (
-                                        <span className="text-xs text-rose-300" title="Geocoded Source">📍</span>
-                                    )}
-                                </div>
+                        {activeProject?.entries.filter(e => e.title.toLowerCase().includes(searchTerm.toLowerCase()) || e.translator.name.toLowerCase().includes(searchTerm.toLowerCase())).map((e) => (
+                          <tr key={e.id} className="hover:bg-indigo-50/5 transition-all duration-300 group">
+                            <td className="p-8">
+                                <input className="bg-transparent border-none outline-none w-full text-slate-900 font-bold serif focus:ring-4 ring-indigo-50 p-2 rounded-xl transition-all" value={e.title} onChange={evt => updateEntry(e.id, {title: evt.target.value})} />
                             </td>
-                            <td className="p-8 group">
-                                <div className="flex items-center gap-2">
-                                    <input 
-                                        className="bg-transparent border-b border-transparent hover:border-indigo-200 focus:border-indigo-400 outline-none w-full text-indigo-600 font-bold transition-all py-1"
-                                        value={e.city || ''}
-                                        placeholder="Type city..."
-                                        onBlur={(evt) => {
-                                            const cityName = evt.target.value;
-                                            const coords = resolveOfflineCoords(cityName);
-                                            updateEntry(e.id, { city: cityName, customMetadata: { ...e.customMetadata, targetCoord: coords || e.customMetadata?.targetCoord } });
-                                        }}
-                                        onChange={(evt) => updateEntry(e.id, { city: evt.target.value })}
-                                    />
-                                    {e.customMetadata?.targetCoord && (
-                                        <span className="text-xs text-indigo-300" title="Geocoded Target">📍</span>
-                                    )}
-                                </div>
+                            <td className="p-8">
+                                <input 
+                                    type="number" 
+                                    className="bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-400 outline-none w-24 text-slate-700 font-bold transition-all py-1 text-center" 
+                                    value={e.publicationYear || ''} 
+                                    onChange={(evt) => updateEntry(e.id, { publicationYear: parseInt(evt.target.value) || 0 })} 
+                                />
                             </td>
-                            <td className="p-8 text-slate-500 font-bold text-base">{e.translator.name}</td>
+                            <td className="p-8">
+                                <input className="bg-transparent border-b border-transparent hover:border-rose-200 focus:border-rose-400 outline-none w-full text-rose-600 font-bold transition-all py-1" value={e.originalCity || ''} onBlur={(evt) => handleManualSourceHubChange(e.id, evt.target.value)} onChange={(evt) => updateEntry(e.id, { originalCity: evt.target.value })} />
+                            </td>
+                            <td className="p-8">
+                                <input className="bg-transparent border-b border-transparent hover:border-indigo-200 focus:border-indigo-400 outline-none w-full text-indigo-600 font-bold transition-all py-1" value={e.city || ''} onBlur={(evt) => {
+                                    const cityName = evt.target.value;
+                                    const coords = resolveOfflineCoords(cityName);
+                                    updateEntry(e.id, { city: cityName, customMetadata: { ...e.customMetadata, targetCoord: coords || e.customMetadata?.targetCoord } });
+                                }} onChange={(evt) => updateEntry(e.id, { city: evt.target.value })} />
+                            </td>
+                            <td className="p-8">
+                                <input className="bg-transparent border-none outline-none w-full text-slate-500 text-sm italic focus:ring-4 ring-slate-50 p-2 rounded-xl" value={e.publisher} onChange={evt => updateEntry(e.id, {publisher: evt.target.value})} />
+                            </td>
+                            <td className="p-8">
+                                <input className="bg-transparent border-none outline-none w-full text-slate-500 font-bold text-base focus:ring-4 ring-slate-50 p-2 rounded-xl" value={e.translator.name} onChange={evt => updateEntry(e.id, {translator: {...e.translator, name: evt.target.value}})} />
+                            </td>
+                            {activeProject?.customColumns?.map(col => (
+                                <td key={col} className="p-8">
+                                    <input 
+                                        className="bg-transparent border-b border-transparent hover:border-emerald-200 focus:border-emerald-400 outline-none w-full text-emerald-600 font-bold transition-all py-1 italic" 
+                                        value={e.customMetadata?.[col] || ''} 
+                                        onChange={(evt) => updateEntryMetadata(e.id, col, evt.target.value)} 
+                                        placeholder="..."
+                                    />
+                                </td>
+                            ))}
                             <td className="p-8 text-center">
-                                {e.customMetadata?.targetCoord && e.customMetadata?.sourceCoord ? (
-                                    <div className="flex items-center justify-center gap-2">
-                                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)] animate-pulse"></div>
-                                        <span className="text-[9px] font-black text-emerald-600 uppercase tracking-tighter">Active Path</span>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center justify-center gap-2 text-slate-300">
-                                        <span className="text-[9px] font-black uppercase tracking-tighter">Broken Flow</span>
-                                    </div>
-                                )}
+                                <div className="flex items-center justify-center gap-4">
+                                    {e.customMetadata?.targetCoord && e.customMetadata?.sourceCoord && (
+                                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.5)]" title="Linked to Map"></div>
+                                    )}
+                                    <button onClick={() => deleteEntry(e.id)} className="w-10 h-10 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 shadow-sm">&times;</button>
+                                </div>
                             </td>
-                            <td className="p-8 text-slate-400 font-mono text-sm text-right font-bold">{e.publicationYear}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -618,31 +726,16 @@ function App() {
             <div className="p-24 h-full overflow-auto animate-fadeIn bg-slate-950 text-white flex flex-col items-center custom-scrollbar">
                 {activeProject?.blueprint ? (
                     <div className="max-w-5xl w-full space-y-20 pb-20">
-                        <div className="space-y-6">
-                            <div className="w-20 h-2 bg-indigo-500 rounded-full mb-8 shadow-[0_0_20px_rgba(99,102,241,0.5)]"></div>
+                        <div className="space-y-6 text-center">
                             <h2 className="text-7xl font-bold serif leading-tight tracking-tight">Project Architecture</h2>
                             <p className="text-3xl text-slate-400 font-serif italic leading-relaxed">{activeProject.blueprint.projectScope}</p>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                            <div className="bg-white/5 p-16 rounded-[4rem] border border-white/5 space-y-10 shadow-2xl">
-                                <h3 className="text-[12px] font-black uppercase tracking-[0.4em] text-indigo-400">Archival Schema</h3>
-                                <div className="flex flex-wrap gap-4">
-                                    {activeProject.blueprint.suggestedSchema.map(s => <span key={s.fieldName} className="px-6 py-3 bg-white/10 rounded-2xl text-[12px] font-bold border border-white/5 hover:bg-white/20 transition-all">{s.fieldName}</span>)}
-                                </div>
-                            </div>
-                            <div className="bg-white/5 p-16 rounded-[4rem] border border-white/5 space-y-10 shadow-2xl">
-                                <h3 className="text-[12px] font-black uppercase tracking-[0.4em] text-indigo-400">Methodological Summary</h3>
-                                <p className="text-2xl font-serif italic text-slate-300 leading-relaxed">
-                                    {activeProject.blueprint.methodology}
-                                </p>
-                            </div>
                         </div>
                     </div>
                 ) : (
                     <div className="flex-1 flex flex-col items-center justify-center space-y-16 max-w-3xl text-center">
-                         <div className="text-8xl mb-4 bg-white/5 w-32 h-32 rounded-[3rem] flex items-center justify-center border border-white/10 shadow-2xl animate-pulse">🏛️</div>
+                         <div className="text-8xl mb-4 bg-white/5 w-32 h-32 rounded-[3rem] flex items-center justify-center border border-white/10">🏛️</div>
                          <h2 className="text-5xl font-bold serif">Framework Not Deployed</h2>
-                         <button onClick={handleGenerateBlueprintInLab} disabled={isArchitecting} className={`px-20 py-8 bg-indigo-600 text-white rounded-[3rem] text-sm font-black uppercase tracking-[0.5em] transition-all shadow-2xl ${isArchitecting ? 'opacity-50 animate-pulse' : 'hover:bg-indigo-500 hover:scale-105 active:scale-95 ring-[12px] ring-indigo-500/10'}`}>
+                         <button onClick={handleGenerateBlueprintInLab} disabled={isArchitecting} className="px-20 py-8 bg-indigo-600 text-white rounded-[3rem] text-sm font-black uppercase tracking-[0.5em] transition-all shadow-2xl">
                             {isArchitecting ? 'Architecting Framework...' : 'Generate Lab Blueprint'}
                          </button>
                     </div>
@@ -652,9 +745,7 @@ function App() {
       </main>
 
       <footer className="absolute bottom-4 left-0 w-full text-center pointer-events-none z-[100]">
-          <p className="text-[10px] font-black uppercase tracking-[0.6em] text-slate-400/60 serif italic">
-            @Lidia Zhou Mengyuan
-          </p>
+          <p className="text-[10px] font-black uppercase tracking-[0.6em] text-slate-400/60 serif italic">@Lidia Zhou Mengyuan</p>
       </footer>
 
       {showTheoryLab && <TheoryLab onClose={() => setShowTheoryLab(false)} onApplyBlueprint={handleApplyBlueprint} />}
