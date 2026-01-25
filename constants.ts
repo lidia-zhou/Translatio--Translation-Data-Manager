@@ -17,13 +17,19 @@ export const SAMPLE_TUTORIAL_SCRIPT = [
 ];
 
 export const COORDS: Record<string, [number, number]> = {
+    // Countries & Origins
     "portugal": [-9.1393, 38.7223], "葡萄牙": [-9.1393, 38.7223],
     "lisbon": [-9.1393, 38.7223], "里斯本": [-9.1393, 38.7223],
+    "brazil": [-47.9292, -15.7801], "巴西": [-47.9292, -15.7801],
+    
+    // Major Chinese Hubs
     "beijing": [116.4074, 39.9042], "北京": [116.4074, 39.9042],
-    "shanghai": [121.4737, 31.2304], "上海": [121.4737, 31.2304],
+    "shanghai": [121.4737, 31.2304], "上海": [121.4737, 31.2304], "沪": [121.4737, 31.2304],
     "macau": [113.5439, 22.1987], "澳门": [113.5439, 22.1987],
     "hong kong": [114.1733, 22.3193], "香港": [114.1733, 22.3193],
     "taipei": [121.5654, 25.0330], "台北": [121.5654, 25.0330], "台湾": [121.5654, 25.0330], "taiwan": [121.5654, 25.0330],
+    
+    // Provincial Capitals & Relevant Translation Hubs
     "haikou": [110.3312, 20.0319], "海口": [110.3312, 20.0319], "hainan": [110.3312, 20.0319], "海南": [110.3312, 20.0319],
     "nanjing": [118.7969, 32.0603], "南京": [118.7969, 32.0603], "jiangsu": [118.7969, 32.0603], "江苏": [118.7969, 32.0603],
     "shijiazhuang": [114.5025, 38.0455], "石家庄": [114.5025, 38.0455], "hebei": [114.5025, 38.0455], "河北": [114.5025, 38.0455],
@@ -42,6 +48,16 @@ export const COORDS: Record<string, [number, number]> = {
     "xian": [108.9401, 34.3415], "西安": [108.9401, 34.3415], "shaanxi": [108.9401, 34.3415], "陕西": [108.9401, 34.3415],
     "chengdu": [104.0665, 30.5723], "成都": [104.0665, 30.5723], "sichuan": [104.0665, 30.5723], "四川": [104.0665, 30.5723],
     "kunming": [102.7122, 25.0406], "昆明": [102.7122, 25.0406], "yunnan": [102.7122, 25.0406], "云南": [102.7122, 25.0406],
+    "hefei": [117.2272, 31.8206], "合肥": [117.2272, 31.8206], "anhui": [117.2272, 31.8206], "安徽": [117.2272, 31.8206],
+    "zhengzhou": [113.6253, 34.7466], "郑州": [113.6253, 34.7466], "henan": [113.6253, 34.7466], "河南": [113.6253, 34.7466],
+    "taiyuan": [112.5489, 37.8706], "太原": [112.5489, 37.8706], "shanxi": [112.5489, 37.8706], "山西": [112.5489, 37.8706],
+    "nanchang": [115.8579, 28.6820], "南昌": [115.8579, 28.6820], "jiangxi": [115.8579, 28.6820], "江西": [115.8579, 28.6820],
+    "shenyang": [123.4294, 41.7968], "沈阳": [123.4294, 41.7968], "liaoning": [123.4294, 41.7968], "辽宁": [123.4294, 41.7968],
+    "harbin": [126.6424, 45.7570], "哈尔滨": [126.6424, 45.7570], "heilongjiang": [126.6424, 45.7570], "黑龙江": [126.6424, 45.7570],
+    "hohhot": [111.7511, 40.8415], "呼和浩特": [111.7511, 40.8415], "inner mongolia": [111.7511, 40.8415], "内蒙古": [111.7511, 40.8415],
+    "urumqi": [87.6168, 43.8256], "乌鲁木齐": [87.6168, 43.8256], "xinjiang": [87.6168, 43.8256], "新疆": [87.6168, 43.8256],
+    "lhasa": [91.1322, 29.6604], "拉萨": [91.1322, 29.6604], "tibet": [91.1322, 29.6604], "西藏": [91.1322, 29.6604],
+    "xining": [101.7789, 36.6231], "西宁": [101.7789, 36.6231], "qinghai": [101.7789, 36.6231], "青海": [101.7789, 36.6231],
 };
 
 const PT = "Portugal";
@@ -96,7 +112,7 @@ export const SAMPLE_ENTRIES: BibEntry[] = [
     { id: "v2-37", title: "scotoma", publicationYear: 2015, author: { name: "Fernando Pinto do Amaral", gender: Gender.MALE }, translator: { name: "Yao Jingming", gender: Gender.MALE }, publisher: "Chinese university of Hong Kong Press", city: "Hong Kong", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["hong kong"] } },
     { id: "v2-38", title: "os Dores", publicationYear: 2015, author: { name: "Henrique de senna Fernandes", gender: Gender.MALE }, translator: { name: "Yu Huijuan", gender: Gender.FEMALE }, publisher: "Instituto Cultural de Macau", city: "Macau", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["macau"] } },
     { id: "v2-39", title: "Hoje sinto-Me...", publicationYear: 2015, author: { name: "Madalena Moniz", gender: Gender.FEMALE }, translator: { name: "Gua Gua", gender: Gender.FEMALE }, publisher: "Chongqing Publishing House", city: "Chongqing", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["chongqing"] } },
-    { id: "v2-40", title: "A Educação do Estóico", publicationYear: 2015, author: { name: "Fernando Pessoa", gender: Gender.MALE }, translator: { name: "Liu Yongjun", gender: Gender.MALE }, publisher: "China overseas Chinese Press", city: "Beijing", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["beijing"] } },
+    { id: "v2-40", title: "A Education do Estóico", publicationYear: 2015, author: { name: "Fernando Pessoa", gender: Gender.MALE }, translator: { name: "Liu Yongjun", gender: Gender.MALE }, publisher: "China overseas Chinese Press", city: "Beijing", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["beijing"] } },
     { id: "v2-41", title: "o silêncio da água", publicationYear: 2015, author: { name: "José Saramago", gender: Gender.MALE }, translator: { name: "Min Xuefei", gender: Gender.FEMALE }, publisher: "Zhejiang Children's Publishing House", city: "Hangzhou", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["hangzhou"] } },
     { id: "v2-42", title: "A viagem do Elefante", publicationYear: 2015, author: { name: "José Saramago", gender: Gender.MALE }, translator: { name: "Wang Yuan", gender: Gender.FEMALE }, publisher: "Writers Publishing House", city: "Beijing", originalCity: PT, sourceLanguage: "Portuguese", targetLanguage: "Chinese", customMetadata: { sourceCoord: PT_COORD, targetCoord: COORDS["beijing"] } },
 

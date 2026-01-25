@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
-import { BibEntry, GraphNode, GraphLink, NodeSizeMetric, NetworkConfig, ResearchBlueprint, LayoutType, EdgeType } from '../types';
+import { BibEntry, GraphNode, GraphLink, NodeSizeMetric, NetworkConfig, ResearchBlueprint, LayoutType, EdgeType, NodeMetric } from '../types';
 
 interface NetworkGraphProps {
   data: BibEntry[];
@@ -133,7 +133,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       if (attr === 'city') return entry.city || '';
       if (attr === 'sourceLanguage') return entry.sourceLanguage;
       if (attr === 'targetLanguage') return entry.targetLanguage;
-      if (attr.startsWith('custom:')) return entry.customMetadata?.[attr.split(':')[1]] || '';
+      if (attr.startsWith('custom:')) {
+        const customKey = attr.split(':')[1];
+        return customKey ? entry.customMetadata?.[customKey] || '' : '';
+      }
       return '';
     };
 
@@ -339,18 +342,26 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
         .on("end", (e, d) => { if(!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
 
-    // Fix: Explicitly cast the metric key to any to avoid index signature errors (Fixing line 314 error)
-    const getRadius = (d: any) => {
+    // Fix: Use properly narrowed metricKey and type-safe index access for NodeMetric
+    const getRadius = (d: any): number => {
         if (sizeBy === 'uniform') return (minSize + maxSize) / 2;
-        const metricKey: any = sizeBy;
-        const values = graphData.nodes.map(n => (n as any)[metricKey] as number);
-        const extentResult = d3.extent(values);
-        const minVal = extentResult[0] ?? 0;
-        const maxVal = extentResult[1] ?? 1;
+        // Narrow sizeBy to a string to ensure it can be used as an index safely
+        const metricKey = sizeBy as string;
+        const nodes = graphData.nodes;
+        const values: number[] = nodes.map(n => {
+            // Fix: Use type assertion for dynamic property access
+            const val = (n as any)[metricKey];
+            return typeof val === 'number' ? val : 0;
+        });
+        const extent = d3.extent(values);
+        const minVal = extent[0] !== undefined ? extent[0] : 0;
+        const maxVal = extent[1] !== undefined ? extent[1] : 1;
         const scale = d3.scaleSqrt()
             .domain([minVal === maxVal ? 0 : minVal, maxVal || 1])
             .range([minSize, maxSize]);
-        return scale((d as any)[metricKey] as number);
+        // Explicitly cast d to any for dynamic index access in this specific visualization context
+        const targetVal = (d as any)[metricKey];
+        return scale(Number(targetVal || 0));
     };
 
     node.append("circle")

@@ -63,7 +63,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
       return;
     }
 
-    // Fix: Reference svgBlob instead of the non-existent 'blob' variable on line 68.
     if (format === 'svg') {
       const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(svgBlob);
@@ -98,7 +97,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
   };
 
   const geoData = useMemo(() => {
-    // 1. Flow Calculation
     const flows = data.map(e => {
       const sCoord = (e.customMetadata?.sourceCoord as any) || COORDS["lisbon"];
       const tCoord = (e.customMetadata?.targetCoord as any) || null;
@@ -108,7 +106,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
       return null;
     }).filter(Boolean) as any[];
 
-    // 2. Distribution - Robust naming logic
     const distributionMap = new Map<string, any>();
     data.forEach(e => {
         const coords = (e.customMetadata?.targetCoord as any) || null;
@@ -126,7 +123,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
                   province: e.provinceState 
                 });
             } else if (validName) {
-                // Prioritize the best available name for this coordinate cluster
                 const existing = distributionMap.get(key);
                 if (existing.name === 'Unknown Location') {
                     existing.name = validName;
@@ -167,7 +163,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
     const zoom = d3.zoom<SVGSVGElement, any>().scaleExtent([0.5, 60]).on("zoom", (e) => g.attr("transform", e.transform));
     svg.call(zoom);
 
-    // Basemap Layer
     g.append("path").datum({type: "Sphere"}).attr("fill", "#fcfcfd").attr("d", path as any);
     g.selectAll(".country").data(mapData.features).join("path")
       .attr("fill", "#ffffff").attr("stroke", "#cbd5e1").attr("stroke-width", 0.5).attr("d", path as any);
@@ -182,23 +177,21 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
           return `M${s[0]},${s[1]}A${dr},${dr} 0 0,1 ${t[0]},${t[1]}`;
       };
       
-      // Hit Areas (Invisible but wide)
       arcLayer.selectAll(".flow-hit").data(geoData.flows).join("path")
         .attr("fill", "none").attr("stroke", "transparent").attr("stroke-width", 20)
         .attr("d", arcGenerator)
         .style("cursor", "pointer")
         .on("mouseenter", (e, d) => {
-            setTooltip({ x: e.pageX, y: e.pageY, title: d.title, from: d.from, to: d.to, type: 'arc' });
+            // UPDATED: Simple title only for arcs
+            setTooltip({ x: e.pageX, y: e.pageY, title: d.title, type: 'arc' });
         })
         .on("mouseleave", () => setTooltip(null));
 
-      // Visual Arcs
       arcLayer.selectAll(".flow-visual").data(geoData.flows).join("path")
         .attr("fill", "none").attr("stroke", "#6366f1").attr("stroke-width", 2).attr("stroke-opacity", 0.25)
         .attr("d", arcGenerator)
         .attr("pointer-events", "none");
 
-      // Particles
       geoData.flows.forEach((d) => {
           const s = projection(d.source);
           const t = projection(d.target);
@@ -242,14 +235,13 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
 
   return (
     <div className="flex-1 w-full h-full bg-[#f8fafc] relative overflow-hidden flex flex-col select-none">
-      {/* TOOLTIP COMPONENT */}
       {tooltip && (
           <div 
             className="fixed z-[9999] pointer-events-none bg-slate-900 text-white p-6 rounded-[2rem] shadow-3xl border border-white/10 animate-fadeIn space-y-2 backdrop-blur-2xl ring-1 ring-white/20 transition-opacity duration-200"
             style={{ left: tooltip.x + 30, top: tooltip.y - 30 }}
           >
               <h5 className="text-[9px] font-black uppercase tracking-[0.4em] text-indigo-400">
-                {tooltip.type === 'node' ? 'City Hub' : 'Textual Movement'}
+                {tooltip.type === 'node' ? 'City Hub' : 'Archival Work / 作品名称'}
               </h5>
               <p className="text-xl font-bold serif leading-tight">{tooltip.title}</p>
               {tooltip.subtitle && <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{tooltip.subtitle}</p>}
@@ -258,17 +250,9 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
                     Dataset Volume: <span className="text-indigo-300">{tooltip.count} Works</span>
                   </p>
               )}
-              {tooltip.from && (
-                  <div className="pt-2 flex items-center gap-3">
-                      <span className="text-[10px] bg-white/10 px-3 py-1.5 rounded-lg font-bold border border-white/5 uppercase">{tooltip.from}</span>
-                      <span className="text-indigo-400 text-xl">→</span>
-                      <span className="text-[10px] bg-indigo-600 px-3 py-1.5 rounded-lg font-bold border border-indigo-400 uppercase">{tooltip.to}</span>
-                  </div>
-              )}
           </div>
       )}
 
-      {/* ACTION PANEL */}
       <div className="absolute top-10 right-10 z-[100] flex gap-4">
          <div className="bg-white/95 backdrop-blur-2xl p-1.5 rounded-[2rem] border border-slate-200 shadow-2xl flex gap-1 ring-1 ring-slate-100">
             <button onClick={() => setMode('distribution')} className={`px-8 py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all ${mode === 'distribution' ? 'bg-slate-900 text-white shadow-xl' : 'text-slate-400 hover:bg-slate-50'}`}>Density / 密度</button>
@@ -283,7 +267,6 @@ const WorldMap: React.FC<WorldMapProps> = ({ data }) => {
          </div>
       </div>
 
-      {/* PROFESSIONAL LEGEND */}
       <div className="absolute bottom-12 left-12 z-[100] bg-white/90 backdrop-blur-2xl p-8 rounded-[3rem] border border-slate-100 shadow-3xl w-80 space-y-6 animate-slideUp ring-1 ring-slate-100">
           <div className="space-y-1">
               <h5 className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Computational GIS</h5>
