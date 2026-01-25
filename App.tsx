@@ -11,13 +11,15 @@ import ArchitectStudio from './components/ArchitectStudio';
 import { architectDatabaseSchema, ArchitectOutput, generateInsights, geocodeLocation, extractMetadataFromEntries } from './services/geminiService';
 import { SAMPLE_ENTRIES, COORDS as LOCAL_COORDS } from './constants';
 
-const STORAGE_KEY_PROJECTS = 'transdata_core_v33_gis_robust';
-const STORAGE_KEY_ACTIVE_ID = 'transdata_active_id_v33_gis_robust';
+const STORAGE_KEY_PROJECTS = 'transdata_core_v34_gis_robust';
+const STORAGE_KEY_ACTIVE_ID = 'transdata_active_id_v34_gis_robust';
 
+// Improved column detection with more variants
 const getColumnValue = (row: any, keys: string[], possibleNames: string[]) => {
   const normalizedNames = possibleNames.map(n => n.toLowerCase().trim());
   const foundKey = keys.find(k => {
     const nk = k.toLowerCase().trim();
+    // Exact or partial inclusion match
     return normalizedNames.includes(nk) || 
            normalizedNames.some(pn => nk.startsWith(pn) || pn.startsWith(nk) || nk.includes(pn));
   });
@@ -40,10 +42,9 @@ function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [statsInsights, setStatsInsights] = useState("");
   
-  // Time Filtering State
   const [yearFilter, setYearFilter] = useState<[number, number]>([1800, 2025]);
+  const [isTimeFilterExpanded, setIsTimeFilterExpanded] = useState(true);
   
-  // Manual Entry States
   const [showEntryForm, setShowEntryForm] = useState(false);
   const [newEntry, setNewEntry] = useState<Partial<BibEntry>>({
     title: '', author: { name: '', gender: Gender.UNKNOWN }, 
@@ -55,7 +56,6 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeProject = useMemo(() => projects.find(p => p.id === activeProjectId) || null, [projects, activeProjectId]);
 
-  // Derived filtered data
   const filteredEntries = useMemo(() => {
     if (!activeProject) return [];
     return activeProject.entries.filter(e => {
@@ -66,7 +66,6 @@ function App() {
     });
   }, [activeProject, searchTerm, yearFilter]);
 
-  // Calculate project year bounds
   const projectYearBounds = useMemo(() => {
     if (!activeProject || activeProject.entries.length === 0) return [1800, 2025];
     const years = activeProject.entries.map(e => e.publicationYear).filter(y => y > 0);
@@ -77,7 +76,7 @@ function App() {
     if (activeProject) {
         setYearFilter([projectYearBounds[0], projectYearBounds[1]]);
     }
-  }, [activeProjectId]);
+  }, [activeProjectId, projectYearBounds, activeProject]);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects)), [projects]);
   useEffect(() => {
@@ -87,50 +86,108 @@ function App() {
 
   const enrichEntriesWithGIS = async (entries: BibEntry[]): Promise<BibEntry[]> => {
     const updated = [...entries];
+    // Filter for entries that have some location string but no coordinates yet
     const needsGeocoding = updated.filter(e => 
-      ((e.city && e.city.length > 1) || (e.provinceState && e.provinceState.length > 1)) && 
+      ((e.city && e.city.length > 0) || (e.provinceState && e.provinceState.length > 0)) && 
       !e.customMetadata?.targetCoord
     );
     
     if (needsGeocoding.length === 0) return updated;
-    const queryCoordsMap = new Map<string, [number, number]>();
-    const uniqueQueries = Array.from(new Set(needsGeocoding.map(e => {
-       const parts = [e.provinceState, e.city].filter(p => p && p.length > 1 && p.toLowerCase() !== 'unknown');
-       return parts.join(" ").trim();
-    })));
 
-    for (const query of uniqueQueries) {
-      if (!query) continue;
-      const lowerQuery = query.toLowerCase();
-      if (LOCAL_COORDS[lowerQuery]) {
-        queryCoordsMap.set(query, LOCAL_COORDS[lowerQuery]);
-      } else {
-        const parts = query.split(" ");
-        let foundLocal = false;
-        for (const p of parts) {
-            if (LOCAL_COORDS[p.toLowerCase()]) {
-                queryCoordsMap.set(query, LOCAL_COORDS[p.toLowerCase()]);
-                foundLocal = true;
-                break;
-            }
-        }
-        if (!foundLocal && process.env.API_KEY) {
+    const getLocalCoord = (val?: string): [number, number] | null => {
+      if (!val) return null;
+      const clean = String(val).toLowerCase().trim();
+      if (!clean || clean === 'unknown' || clean === 'null' || clean === '无' || clean === '未知') return null;
+
+      // 1. Direct match
+      if (LOCAL_COORDS[clean]) return LOCAL_COORDS[clean];
+
+      // 2. Stemmed match (removing administrative suffixes)
+      const stem = clean.replace(/(市|省|自治区|特别行政区|街道|区|县|city|province|state|s\.a\.r\.)$/g, "").trim();
+      if (LOCAL_COORDS[stem]) return LOCAL_COORDS[stem];
+      
+      return null;
+    };
+
+    const resultsMap = new Map<string, { coord: [number, number], source: 'local' | 'ai' }>();
+
+    for (const e of needsGeocoding) {
+      const city = e.city;
+      const province = e.provinceState;
+      const key = `${province}|${city}`;
+      if (resultsMap.has(key)) continue;
+
+      // Priority 1: Check City Field in Local Dictionary
+      let localMatch = getLocalCoord(city);
+      if (localMatch) {
+        resultsMap.set(key, { coord: localMatch, source: 'local' });
+        continue;
+      }
+
+      // Priority 2: Check Province/State Field in Local Dictionary
+      localMatch = getLocalCoord(province);
+      if (localMatch) {
+        resultsMap.set(key, { coord: localMatch, source: 'local' });
+        continue;
+      }
+
+      // Priority 3: Scan all custom metadata for anything matching a known hub (Deep scan)
+      if (e.customMetadata) {
+          for (const val of Object.values(e.customMetadata)) {
+              if (typeof val === 'string' && val.length > 1) {
+                  const deepMatch = getLocalCoord(val);
+                  if (deepMatch) {
+                      resultsMap.set(key, { coord: deepMatch, source: 'local' });
+                      break;
+                  }
+              }
+          }
+          if (resultsMap.has(key)) continue;
+      }
+
+      // Priority 4: Fallback to AI Geocoding as last resort
+      if (process.env.API_KEY) {
+        const query = [province, city].filter(p => p && p.length > 1 && p.toLowerCase() !== 'unknown').join(" ").trim();
+        if (query) {
           try {
-            const coords = await geocodeLocation(query);
-            if (coords) queryCoordsMap.set(query, coords);
-          } catch (e) { console.warn(`Geocode failed for ${query}`); }
+            const aiCoord = await geocodeLocation(query);
+            if (aiCoord) {
+              resultsMap.set(key, { coord: aiCoord, source: 'ai' });
+            }
+          } catch (err) {
+            console.warn(`Geocode failed for ${query}`);
+          }
         }
       }
     }
 
     return updated.map(e => {
-      const parts = [e.provinceState, e.city].filter(p => p && p.length > 1 && p.toLowerCase() !== 'unknown');
-      const query = parts.join(" ").trim();
-      if (query && queryCoordsMap.has(query) && !e.customMetadata?.targetCoord) {
-        return { ...e, customMetadata: { ...e.customMetadata, targetCoord: queryCoordsMap.get(query) } };
+      const key = `${e.provinceState}|${e.city}`;
+      if (resultsMap.has(key) && !e.customMetadata?.targetCoord) {
+        const match = resultsMap.get(key)!;
+        return { 
+          ...e, 
+          customMetadata: { 
+            ...e.customMetadata, 
+            targetCoord: match.coord,
+            gisSource: match.source 
+          } 
+        };
       }
       return e;
     });
+  };
+
+  const reprocessProjectGIS = async () => {
+    if (!activeProject) return;
+    setIsGeocoding(true);
+    const enrichedEntries = await enrichEntriesWithGIS(activeProject.entries);
+    setProjects(prev => prev.map(p => p.id === activeProject.id ? {
+      ...p,
+      entries: enrichedEntries,
+      lastModified: Date.now()
+    } : p));
+    setIsGeocoding(false);
   };
 
   const addManualEntry = async () => {
@@ -175,6 +232,7 @@ function App() {
   };
 
   const deleteProject = (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     if (window.confirm("Are you sure you want to delete this lab project? / 确定要删除该研究项目吗？此操作无法撤销。")) {
       setProjects(prev => prev.filter(p => p.id !== id));
@@ -221,14 +279,18 @@ function App() {
       const rawData = XLSX.utils.sheet_to_json(ws) as any[];
       if (rawData.length === 0) throw new Error("Empty file");
       const keys = Object.keys(rawData[0]);
+      
       const newEntries: BibEntry[] = rawData.map((row, i) => {
         const title = getColumnValue(row, keys, ['Title', '书名', '标题', 'Name', 'Original Title', 'Work', '作品名']) || 'Untitled';
         const yearRaw = getColumnValue(row, keys, ['Year', '年份', '出版年份', 'Date', 'Time', 'Period']);
         const author = getColumnValue(row, keys, ['Author', '作者', '著者', 'Writer', 'Creator']) || 'Unknown';
         const translator = getColumnValue(row, keys, ['Translator', '译者', '译著者', 'Mediator']) || 'Unknown';
         const publisher = getColumnValue(row, keys, ['Publisher', '出版社', '出版机构', 'Institution']) || 'Unknown';
-        const city = getColumnValue(row, keys, ['City', '城市', '镇', 'Town', 'Site']) || '';
-        const province = getColumnValue(row, keys, ['Province', 'State', '省', '省份', '州', 'Location', 'Place']) || '';
+        
+        // Expanded recognition for City and Province
+        const city = getColumnValue(row, keys, ['City', '城市', '镇', 'Town', 'Site', 'PubPlace', '出版地', '地点', '市']) || '';
+        const province = getColumnValue(row, keys, ['Province', 'State', '省', '省份', '州', 'Region', 'County', '地区', '行政区']) || '';
+        
         const sourceLang = getColumnValue(row, keys, ['SourceLang', '源语', '原文语言', 'Source', 'From']) || 'Portuguese';
         const targetLang = getColumnValue(row, keys, ['TargetLang', '目标语', '译文语言', 'Target', 'To']) || 'Chinese';
         const lat = getColumnValue(row, keys, ['Latitude', 'Lat', '纬度', 'CoordY', 'Y']);
@@ -239,6 +301,7 @@ function App() {
         const customMetadata: Record<string, any> = { ...row };
         if (lat !== null && lon !== null && !isNaN(Number(lat)) && !isNaN(Number(lon))) {
            customMetadata.targetCoord = [Number(lon), Number(lat)];
+           customMetadata.gisSource = 'file';
         }
         return {
           id: `imp-${Date.now()}-${i}`,
@@ -249,7 +312,9 @@ function App() {
           sourceLanguage: String(sourceLang), targetLanguage: String(targetLang), customMetadata
         };
       });
+
       const geocodedEntries = await enrichEntriesWithGIS(newEntries);
+      
       if (targetProjectId) {
         setProjects(prev => prev.map(p => p.id === targetProjectId ? { 
           ...p, entries: [...p.entries, ...geocodedEntries], lastModified: Date.now() 
@@ -258,7 +323,7 @@ function App() {
         const newProj: Project = { 
           id: `proj-${Date.now()}`, name: `Import: ${file.name}`, lastModified: Date.now(), 
           entries: geocodedEntries, blueprint: null, 
-          customColumns: keys.filter(k => !['Title', '书名', 'Author', '作者', 'Year', '年份', 'Publisher', '出版社', 'City', '出版地'].includes(k)) 
+          customColumns: keys.filter(k => !['Title', '书名', 'Author', '作者', 'Year', '年份', 'Publisher', '出版社', 'City', '出版地', 'Province', 'State', '省'].includes(k)) 
         };
         setProjects(prev => [newProj, ...prev]);
         setActiveProjectId(newProj.id);
@@ -348,23 +413,23 @@ function App() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {projects.sort((a,b) => b.lastModified - a.lastModified).slice(0, 9).map(p => (
-                            <button key={p.id} onClick={() => setActiveProjectId(p.id)} className="p-6 bg-white border border-slate-100 rounded-[2.5rem] flex items-center gap-5 hover:border-indigo-200 transition-all text-left shadow-sm hover:shadow-xl group relative">
+                            <div key={p.id} onClick={() => setActiveProjectId(p.id)} className="p-6 bg-white border border-slate-100 rounded-[2.5rem] flex items-center gap-5 hover:border-indigo-200 transition-all text-left shadow-sm hover:shadow-xl group relative cursor-pointer">
                                 <div className="text-2xl grayscale group-hover:grayscale-0 transition-all">📘</div>
                                 <div className="flex-1">
-                                    <h4 className="text-xs font-bold serif text-slate-800 line-clamp-1 pr-6">{p.name}</h4>
+                                    <h4 className="text-xs font-bold serif text-slate-800 line-clamp-1 pr-8">{p.name}</h4>
                                     <div className="mt-1">
                                       <p className="text-[8px] font-black uppercase text-indigo-500 tracking-widest">{p.entries.length} RECORDS</p>
                                       <p className="text-[8px] font-black uppercase text-indigo-400 tracking-widest">{p.entries.length} 条记录</p>
                                     </div>
                                 </div>
-                                <div 
+                                <button 
                                   onClick={(e) => deleteProject(p.id, e)}
-                                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-50 text-slate-300 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 transition-all"
+                                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-50 text-slate-300 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 transition-all z-[100]"
                                   title="Delete Project"
                                 >
                                   &times;
-                                </div>
-                            </button>
+                                </button>
+                            </div>
                         ))}
                     </div>
                 </div>
@@ -380,7 +445,6 @@ function App() {
 
   return (
     <div className="h-screen bg-[#fcfcfd] flex flex-col overflow-hidden text-slate-900 font-sans">
-      {/* HEADER */}
       <header className="bg-white border-b border-slate-100 h-20 flex items-center px-10 z-[200]">
         <div className="max-w-[1920px] w-full mx-auto flex items-center justify-between">
           <div className="flex items-center gap-5">
@@ -404,7 +468,6 @@ function App() {
         </div>
       </header>
 
-      {/* MANUAL ENTRY FORM MODAL */}
       {showEntryForm && (
         <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-6 animate-fadeIn">
             <div className="bg-white w-full max-w-2xl rounded-[3rem] shadow-3xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -468,6 +531,13 @@ function App() {
                            <p className="text-slate-400 text-xs font-serif italic">Curating bibliographic records for computational analysis. / 整理书目档案以供计算分析。</p>
                         </div>
                         <div className="flex items-center gap-4">
+                            <button 
+                              onClick={reprocessProjectGIS}
+                              disabled={isGeocoding}
+                              className={`px-6 py-3 border border-indigo-100 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${isGeocoding ? 'bg-slate-100 text-slate-400' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 shadow-sm'}`}
+                            >
+                                {isGeocoding ? 'Identifying GIS...' : 'Scan & Geocode Missing / 识别缺失GIS'}
+                            </button>
                             <input type="text" placeholder="Search entries... / 检索档案..." className="pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-[10px] outline-none focus:ring-4 ring-indigo-50 w-56 font-bold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                         </div>
                     </div>
@@ -515,16 +585,21 @@ function App() {
                                             <td className="p-6 border-r border-slate-100">
                                                 <div className="flex flex-col gap-1">
                                                    <div className="flex items-center gap-3">
-                                                       <span className="text-xs font-bold italic">{[e.provinceState, e.city].filter(p => p && p.length > 1 && p !== 'undefined').join(", ")}</span>
+                                                       <span className="text-xs font-bold italic">{[e.provinceState, e.city].filter(p => p && p.length > 0 && p.toLowerCase() !== 'undefined' && p.toLowerCase() !== 'unknown' && p.toLowerCase() !== '无').join(", ") || 'No Location Data'}</span>
                                                        {e.customMetadata?.targetCoord ? (
                                                           <div className="group relative">
-                                                             <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full inline-block animate-pulse cursor-help"></span>
+                                                             <span className={`w-3 h-3 rounded-full inline-block animate-pulse cursor-help shadow-lg ${e.customMetadata.gisSource === 'local' ? 'bg-indigo-500 shadow-indigo-200' : e.customMetadata.gisSource === 'file' ? 'bg-amber-500' : 'bg-emerald-500 shadow-emerald-200'}`}></span>
                                                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-slate-900 text-white text-[8px] px-3 py-1.5 rounded-lg whitespace-nowrap shadow-2xl z-50">
-                                                                [{e.customMetadata.targetCoord[0].toFixed(2)}, {e.customMetadata.targetCoord[1].toFixed(2)}]
+                                                                {e.customMetadata.gisSource === 'local' ? 'Local Dict Match / 字典匹配' : e.customMetadata.gisSource === 'file' ? 'Provided in File / 原始文件提供' : 'AI Analysis / AI 分析'} [{e.customMetadata.targetCoord[0].toFixed(2)}, {e.customMetadata.targetCoord[1].toFixed(2)}]
                                                              </div>
                                                           </div>
                                                        ) : (
-                                                          <span className="w-2.5 h-2.5 bg-slate-200 rounded-full inline-block"></span>
+                                                          <div className="group relative">
+                                                             <span className="w-3 h-3 bg-rose-200 rounded-full inline-block cursor-help border border-rose-300"></span>
+                                                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-rose-600 text-white text-[8px] px-3 py-1.5 rounded-lg whitespace-nowrap shadow-2xl z-50">
+                                                                Coordinates Missing / 缺失GIS坐标
+                                                             </div>
+                                                          </div>
                                                        )}
                                                    </div>
                                                 </div>
@@ -556,67 +631,84 @@ function App() {
             </div>
         )}
 
-        {/* Floating Temporal Matrix Control */}
         {(viewMode === 'network' || viewMode === 'map' || viewMode === 'list') && activeProject && activeProject.entries.length > 0 && (
-            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[300] w-[600px] animate-slideUp">
-                <div className="bg-slate-900/90 backdrop-blur-3xl p-8 rounded-[2.5rem] shadow-3xl border border-white/10 ring-1 ring-white/10 flex flex-col gap-6">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
-                            <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">Temporal Filter / 历史区间筛选</span>
-                        </div>
-                        <div className="flex items-center gap-3 text-white font-serif text-xl italic">
-                            <span className="px-4 py-1 bg-white/5 rounded-xl border border-white/10">{yearFilter[0]}</span>
-                            <span className="text-slate-500">—</span>
-                            <span className="px-4 py-1 bg-white/5 rounded-xl border border-white/10">{yearFilter[1]}</span>
-                        </div>
-                    </div>
-                    
-                    <div className="relative h-10 flex items-center group">
-                        <div className="absolute w-full h-1.5 bg-white/10 rounded-full"></div>
-                        <div 
-                           className="absolute h-1.5 bg-indigo-500 rounded-full shadow-[0_0_15px_rgba(99,102,241,0.5)]"
-                           style={{
-                              left: `${((yearFilter[0] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}%`,
-                              right: `${100 - ((yearFilter[1] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}%`
-                           }}
-                        ></div>
-                        
-                        {/* Custom Dual Sliders (HTML Hack) */}
-                        <input 
-                            type="range" 
-                            min={projectYearBounds[0]} 
-                            max={projectYearBounds[1]} 
-                            value={yearFilter[0]} 
-                            onChange={(e) => setYearFilter([Math.min(parseInt(e.target.value), yearFilter[1] - 1), yearFilter[1]])}
-                            className="absolute w-full h-full opacity-0 cursor-pointer pointer-events-auto z-10" 
-                        />
-                        <input 
-                            type="range" 
-                            min={projectYearBounds[0]} 
-                            max={projectYearBounds[1]} 
-                            value={yearFilter[1]} 
-                            onChange={(e) => setYearFilter([yearFilter[0], Math.max(parseInt(e.target.value), yearFilter[0] + 1)])}
-                            className="absolute w-full h-full opacity-0 cursor-pointer pointer-events-auto z-20" 
-                        />
-                        
-                        {/* Visual Thumbs */}
-                        <div 
-                          className="absolute w-6 h-6 bg-white rounded-full border-4 border-indigo-500 shadow-xl pointer-events-none"
-                          style={{ left: `calc(${((yearFilter[0] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}% - 12px)` }}
-                        ></div>
-                        <div 
-                          className="absolute w-6 h-6 bg-white rounded-full border-4 border-indigo-500 shadow-xl pointer-events-none"
-                          style={{ left: `calc(${((yearFilter[1] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}% - 12px)` }}
-                        ></div>
-                    </div>
-                    
-                    <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
-                        <span>Min Year / 起始: {projectYearBounds[0]}</span>
-                        <span>{filteredEntries.length} Records Active / 活跃条目</span>
-                        <span>Max Year / 截止: {projectYearBounds[1]}</span>
-                    </div>
-                </div>
+            <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 z-[300] transition-all duration-500 ${isTimeFilterExpanded ? 'w-[600px]' : 'w-auto'} animate-slideUp`}>
+                {isTimeFilterExpanded ? (
+                  <div className="bg-slate-900/90 backdrop-blur-3xl p-8 rounded-[2.5rem] shadow-3xl border border-white/10 ring-1 ring-white/10 flex flex-col gap-6 relative">
+                      <button 
+                        onClick={() => setIsTimeFilterExpanded(false)}
+                        className="absolute top-6 right-6 w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-all text-sm font-light leading-none"
+                      >
+                        &darr;
+                      </button>
+                      <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                              <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                              <div className="text-left">
+                                <span className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 block">Temporal Filter</span>
+                                <span className="text-[9px] font-black uppercase tracking-[0.3em] text-indigo-500 block">历史区间筛选</span>
+                              </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-white font-serif text-xl italic pr-8">
+                              <span className="px-4 py-1 bg-white/5 rounded-xl border border-white/10">{yearFilter[0]}</span>
+                              <span className="text-slate-500">—</span>
+                              <span className="px-4 py-1 bg-white/5 rounded-xl border border-white/10">{yearFilter[1]}</span>
+                          </div>
+                      </div>
+                      
+                      <div className="relative h-10 flex items-center group">
+                          <div className="absolute w-full h-1.5 bg-white/10 rounded-full"></div>
+                          <div 
+                             className="absolute h-1.5 bg-indigo-500 rounded-full shadow-[0_0_15px_rgba(99,102,241,0.5)]"
+                             style={{
+                                left: `${((yearFilter[0] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}%`,
+                                right: `${100 - ((yearFilter[1] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}%`
+                             }}
+                          ></div>
+                          
+                          <input 
+                              type="range" 
+                              min={projectYearBounds[0]} 
+                              max={projectYearBounds[1]} 
+                              value={yearFilter[0]} 
+                              onChange={(e) => setYearFilter([Math.min(parseInt(e.target.value), yearFilter[1] - 1), yearFilter[1]])}
+                              className="absolute w-full h-full opacity-0 cursor-pointer pointer-events-auto z-10" 
+                          />
+                          <input 
+                              type="range" 
+                              min={projectYearBounds[0]} 
+                              max={projectYearBounds[1]} 
+                              value={yearFilter[1]} 
+                              onChange={(e) => setYearFilter([yearFilter[0], Math.max(parseInt(e.target.value), yearFilter[0] + 1)])}
+                              className="absolute w-full h-full opacity-0 cursor-pointer pointer-events-auto z-20" 
+                          />
+                          
+                          <div 
+                            className="absolute w-6 h-6 bg-white rounded-full border-4 border-indigo-500 shadow-xl pointer-events-none"
+                            style={{ left: `calc(${((yearFilter[0] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}% - 12px)` }}
+                          ></div>
+                          <div 
+                            className="absolute w-6 h-6 bg-white rounded-full border-4 border-indigo-500 shadow-xl pointer-events-none"
+                            style={{ left: `calc(${((yearFilter[1] - projectYearBounds[0]) / (projectYearBounds[1] - projectYearBounds[0])) * 100}% - 12px)` }}
+                          ></div>
+                      </div>
+                      
+                      <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-slate-500">
+                          <span>Min Year / 起始: {projectYearBounds[0]}</span>
+                          <span>{filteredEntries.length} Records Active / 活跃条目</span>
+                          <span>Max Year / 截止: {projectYearBounds[1]}</span>
+                      </div>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={() => setIsTimeFilterExpanded(true)}
+                    className="bg-slate-900/90 backdrop-blur-3xl px-8 py-4 rounded-full shadow-3xl border border-white/10 ring-1 ring-white/10 flex items-center gap-4 hover:bg-slate-800 transition-all group"
+                  >
+                    <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+                    <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{yearFilter[0]} — {yearFilter[1]}</span>
+                    <span className="text-slate-400 group-hover:text-white transition-colors">🔍</span>
+                  </button>
+                )}
             </div>
         )}
       </main>

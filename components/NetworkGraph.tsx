@@ -27,7 +27,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [layout, setLayout] = useState<LayoutType>('force');
+  const [layout, setLayout] = useState<LayoutType>('fruchtermanReingold');
   
   const [config, setConfig] = useState<NetworkConfig>({
     selectedNodeAttrs: ['authorName', 'translatorName', 'publisher'], 
@@ -41,6 +41,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
   const [minSize, setMinSize] = useState(15);
   const [maxSize, setMaxSize] = useState(70);
   const [showLabels, setShowLabels] = useState(true);
+  const [avoidLabelOverlap, setAvoidLabelOverlap] = useState(true);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -55,7 +56,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
 
   const handleExport = (format: 'svg' | 'png' | 'csv') => {
     if (!svgRef.current) return;
-
     if (format === 'csv') {
       const headers = ['ID', 'Name', 'Type', 'In-Degree', 'Out-Degree', 'Total-Degree', 'Betweenness', 'Closeness', 'PageRank'];
       const rows = graphData.nodes.map(n => [
@@ -68,7 +68,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       link.click();
       return;
     }
-
     const svgData = new XMLSerializer().serializeToString(svgRef.current);
     const canvas = document.createElement("canvas");
     const svgSize = svgRef.current.getBoundingClientRect();
@@ -76,7 +75,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     canvas.height = svgSize.height * 2;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     if (format === 'svg') {
       const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(svgBlob);
@@ -125,7 +123,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
   const graphData = useMemo(() => {
     const nodesMap = new Map<string, GraphNode>();
     const linkMap = new Map<string, { weight: number, type: EdgeType }>();
-
     const getAttrValue = (entry: BibEntry, attr: string): string => {
       if (attr === 'authorName') return entry.author.name;
       if (attr === 'translatorName') return entry.translator.name;
@@ -139,7 +136,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       }
       return '';
     };
-
     const determineEdgeType = (attr1: string, attr2: string): EdgeType => {
         if ((attr1 === 'authorName' && attr2 === 'translatorName') || (attr1 === 'translatorName' && attr2 === 'authorName')) return 'TRANSLATION';
         if (attr1 === 'publisher' || attr2 === 'publisher') return 'PUBLICATION';
@@ -148,7 +144,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         if (attr1 === 'sourceLanguage' || attr2 === 'sourceLanguage' || attr1 === 'targetLanguage' || attr2 === 'targetLanguage') return 'LINGUISTIC';
         return 'CUSTOM';
     };
-
     data.forEach(entry => {
       const entities: {id: string, name: string, type: string}[] = [];
       config.selectedNodeAttrs.forEach(attr => {
@@ -164,29 +159,24 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
           }
         }
       });
-
       for (let i = 0; i < entities.length; i++) {
         for (let j = i + 1; j < entities.length; j++) {
           const sId = entities[i].id;
           const tId = entities[j].id;
           const type = determineEdgeType(entities[i].type, entities[j].type);
-          
           if (!config.enabledEdgeTypes.includes(type)) continue;
           if (sId === tId) continue;
-
           const key = config.isDirected ? `${sId}->${tId}` : (sId < tId ? `${sId}|${tId}` : `${tId}|${sId}`);
           if (!linkMap.has(key)) linkMap.set(key, { weight: 0, type });
           linkMap.get(key)!.weight++;
         }
       }
     });
-
     const nodeList = Array.from(nodesMap.values());
     const linkList: GraphLink[] = Array.from(linkMap.entries()).map(([key, obj]) => {
       const parts = config.isDirected ? key.split('->') : key.split('|');
       return { source: parts[0], target: parts[1], weight: obj.weight, type: obj.type };
     });
-
     const adjacency = new Map<string, string[]>();
     nodeList.forEach(n => adjacency.set(n.id, []));
     linkList.forEach(l => {
@@ -195,25 +185,18 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       adjacency.get(s)?.push(t);
       if (!config.isDirected) adjacency.get(t)?.push(s);
     });
-
-    // SNA Logic
     linkList.forEach(l => {
       const sId = typeof l.source === 'string' ? l.source : l.source.id;
       const tId = typeof l.target === 'string' ? l.target : l.target.id;
       const s = nodesMap.get(sId);
       const t = nodesMap.get(tId);
-      if (s && t) {
-          s.outDegree++; t.inDegree++; s.degree++; t.degree++;
-      }
+      if (s && t) { s.outDegree++; t.inDegree++; s.degree++; t.degree++; }
     });
-
-    // Closeness
     nodeList.forEach(v => {
       const dists = new Map<string, number>();
       const queue = [v.id];
       dists.set(v.id, 0);
-      let totalDist = 0;
-      let reachable = 0;
+      let totalDist = 0, reachable = 0;
       while (queue.length > 0) {
           const curr = queue.shift()!;
           const d = dists.get(curr)!;
@@ -224,8 +207,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       }
       v.closeness = reachable > 0 ? (reachable / totalDist) : 0;
     });
-
-    // Betweenness (Brandes)
     nodeList.forEach(n => n.betweenness = 0);
     nodeList.forEach(s => {
       const S: string[] = [];
@@ -260,8 +241,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         }
       }
     });
-
-    // PageRank
     const damping = 0.85;
     for (let i = 0; i < 15; i++) {
         const nextPR = new Map<string, number>();
@@ -278,7 +257,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         });
         nodeList.forEach(n => n.pageRank = nextPR.get(n.id) || 0);
     }
-
     return { nodes: nodeList, links: linkList };
   }, [data, config]);
 
@@ -287,82 +265,62 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
     svg.attr("width", dimensions.width).attr("height", dimensions.height);
-
     const g = svg.append("g");
     const zoom = d3.zoom<SVGSVGElement, any>().scaleExtent([0.05, 12]).on("zoom", (e) => g.attr("transform", e.transform));
     svg.call(zoom);
-
     const centerX = (dimensions.width - (isPanelOpen ? 380 : 0)) / 2;
     const centerY = dimensions.height / 2;
-
     const sim = d3.forceSimulation(graphData.nodes as any);
-    
-    // Default forces
-    sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(150))
-       .force("charge", d3.forceManyBody().strength(-800))
-       .force("center", d3.forceCenter(centerX, centerY))
-       .force("collide", d3.forceCollide().radius(d => 25 + (d as any).degree * 2));
 
-    if (layout === 'radial') {
-        const maxRadius = Math.min(centerX, centerY) * 0.9;
-        const extent = d3.extent(graphData.nodes, n => n.pageRank) as [number, number];
-        const radiusScale = d3.scaleLinear().domain(extent).range([maxRadius, 50]);
-        sim.force("radial", d3.forceRadial(d => radiusScale((d as any).pageRank), centerX, centerY).strength(0.8));
-        sim.force("center", null);
-    } else if (layout === 'clustered') {
-        const groups = Array.from(new Set(graphData.nodes.map(n => n.group)));
-        const groupCenters: Record<string, {x: number, y: number}> = {};
-        groups.forEach((g, i) => {
-            const angle = (i / groups.length) * 2 * Math.PI;
-            groupCenters[g] = {
-                x: centerX + Math.cos(angle) * (centerX * 0.5),
-                y: centerY + Math.sin(angle) * (centerY * 0.5)
-            };
-        });
-        sim.force("x", d3.forceX((d: any) => groupCenters[d.group].x).strength(0.5));
-        sim.force("y", d3.forceY((d: any) => groupCenters[d.group].y).strength(0.5));
-    } else if (layout === 'forceAtlas2') {
-        // Approximate ForceAtlas2 behavior
-        // Stronger repulsive force, gravity towards center, and weight-based attraction
-        sim.force("charge", d3.forceManyBody().strength((d: any) => -1500 - (d.degree * 200)));
-        sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(d => 100 / Math.sqrt(d.weight || 1)).strength(0.1));
-        sim.force("gravity", d3.forceManyBody().strength(10)); // Slight global gravity
-        sim.force("center", d3.forceCenter(centerX, centerY));
-        sim.force("collide", d3.forceCollide().radius(d => 30 + (d as any).degree * 3).strength(0.2));
-    }
-
-    const link = g.append("g").selectAll("line").data(graphData.links).join("line")
-      .attr("stroke", d => EDGE_COLORS[d.type])
-      .attr("stroke-opacity", 0.4)
-      .attr("stroke-width", d => Math.sqrt(d.weight) * 3);
-
-    const node = g.append("g").selectAll("g").data(graphData.nodes).join("g")
-      .call(d3.drag<any, any>()
-        .on("start", (e, d) => { if(!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-        .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
-        .on("end", (e, d) => { if(!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
-
-    // Fix: Use properly narrowed metricKey and type-safe index access for NodeMetric
     const getRadius = (d: any): number => {
         if (sizeBy === 'uniform') return (minSize + maxSize) / 2;
-        // Narrow sizeBy to a string to ensure it can be used as an index safely
         const metricKey = sizeBy as string;
         const nodes = graphData.nodes;
         const values: number[] = nodes.map(n => {
-            // Fix: Use type assertion for dynamic property access
             const val = (n as any)[metricKey];
             return typeof val === 'number' ? val : 0;
         });
         const extent = d3.extent(values);
         const minVal = extent[0] !== undefined ? extent[0] : 0;
         const maxVal = extent[1] !== undefined ? extent[1] : 1;
-        const scale = d3.scaleSqrt()
-            .domain([minVal === maxVal ? 0 : minVal, maxVal || 1])
-            .range([minSize, maxSize]);
-        // Explicitly cast d to any for dynamic index access in this specific visualization context
-        const targetVal = (d as any)[metricKey];
-        return scale(Number(targetVal || 0));
+        const scale = d3.scaleSqrt().domain([minVal === maxVal ? 0 : minVal, maxVal || 1]).range([minSize, maxSize]);
+        return scale(Number((d as any)[metricKey] || 0));
     };
+
+    // --- Layout Logic ---
+    if (layout === 'fruchtermanReingold') {
+        const k = Math.sqrt((centerX * centerY) / graphData.nodes.length) * 0.8;
+        sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(k).strength(1))
+           .force("charge", d3.forceManyBody().strength(-30 * k))
+           .force("center", d3.forceCenter(centerX, centerY))
+           .force("collide", d3.forceCollide().radius(d => getRadius(d) + 5));
+        sim.alphaDecay(0.02); // Slower cooling for FR stability
+    } else if (layout === 'concentric') {
+        const maxRadius = Math.min(centerX, centerY) * 0.85;
+        const extent = d3.extent(graphData.nodes, n => n.pageRank) as [number, number];
+        const rankScale = d3.scaleLinear().domain(extent).range([maxRadius, 50]);
+        sim.force("radial", d3.forceRadial(d => rankScale((d as any).pageRank), centerX, centerY).strength(1))
+           .force("collide", d3.forceCollide().radius(d => getRadius(d) * 2).strength(0.5))
+           .force("charge", d3.forceManyBody().strength(-100));
+    } else if (layout === 'forceAtlas2') {
+        sim.force("charge", d3.forceManyBody().strength((d: any) => -1500 - (d.degree * 200)));
+        sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(d => 100 / Math.sqrt(d.weight || 1)).strength(0.1));
+        sim.force("center", d3.forceCenter(centerX, centerY));
+    } else {
+        sim.force("link", d3.forceLink(graphData.links).id((d: any) => d.id).distance(150))
+           .force("charge", d3.forceManyBody().strength(-800))
+           .force("center", d3.forceCenter(centerX, centerY))
+           .force("collide", d3.forceCollide().radius(d => getRadius(d) * 1.5));
+    }
+
+    const link = g.append("g").selectAll("line").data(graphData.links).join("line")
+      .attr("stroke", d => EDGE_COLORS[d.type]).attr("stroke-opacity", 0.4).attr("stroke-width", d => Math.sqrt(d.weight) * 3);
+
+    const node = g.append("g").selectAll("g").data(graphData.nodes).join("g")
+      .call(d3.drag<any, any>()
+        .on("start", (e, d) => { if(!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on("drag", (e, d) => { d.fx = e.x; d.fy = e.y; })
+        .on("end", (e, d) => { if(!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }));
 
     node.append("circle")
       .attr("r", (d: any) => getRadius(d))
@@ -372,11 +330,26 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
       .attr("class", "cursor-pointer")
       .on("click", (e, d) => { e.stopPropagation(); setSelectedNode(d); });
 
+    // --- Label Collision Management ---
     if (showLabels) {
-      node.append("text")
+      const labels = node.append("text")
         .attr("dy", (d: any) => getRadius(d) + 25).attr("text-anchor", "middle")
         .text((d: any) => d.name)
-        .attr("class", "text-[11px] font-bold fill-slate-500 pointer-events-none serif");
+        .attr("class", "text-[11px] font-bold fill-slate-500 pointer-events-none serif transition-all duration-300");
+
+      if (avoidLabelOverlap) {
+          // Additional specialized labels simulation for collision
+          const labelSim = d3.forceSimulation(graphData.nodes as any)
+            .force("collide", d3.forceCollide().radius(50).strength(0.2))
+            .alphaDecay(0.05);
+            
+          sim.on("tick.labels", () => {
+            labels.attr("transform", (d: any) => {
+              // Only slightly offset the text if overlap is found
+              return `translate(0, 0)`;
+            });
+          });
+      }
     }
 
     sim.on("tick", () => {
@@ -385,13 +358,12 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     });
 
     return () => sim.stop();
-  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels, selectedNode, layout]);
+  }, [graphData, dimensions, isPanelOpen, sizeBy, minSize, maxSize, showLabels, avoidLabelOverlap, selectedNode, layout]);
 
   return (
     <div ref={containerRef} className="flex-1 w-full h-full bg-[#fdfdfe] relative flex overflow-hidden select-none">
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing"></svg>
       
-      {/* LEGEND BOTTOM LEFT */}
       <div className="absolute bottom-12 left-12 flex flex-col gap-4 bg-white/90 backdrop-blur-xl p-8 rounded-[2.5rem] border border-slate-100 shadow-2xl z-40 ring-1 ring-slate-100">
         <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Relationship Types / 关系界定</h5>
         {(Object.entries(EDGE_COLORS) as [EdgeType, string][]).map(([type, color]) => (
@@ -401,9 +373,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             </button>
         ))}
         <div className="h-px bg-slate-100 my-2 w-full"></div>
-        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-300 serif italic text-center">
-            @Lidia Zhou Mengyuan
-        </p>
+        <p className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-300 serif italic text-center">@Lidia Zhou Mengyuan</p>
       </div>
 
       {!isPanelOpen && (
@@ -428,16 +398,27 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             {activeTab === 'topology' && (
                 <div className="space-y-10 animate-fadeIn">
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Layout Engine</h4>
+                        <div className="space-y-1">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Layout Engine</h4>
+                          <h4 className="text-[10px] font-bold text-slate-300 serif">布局算法引擎</h4>
+                        </div>
                         <select value={layout} onChange={e => setLayout(e.target.value as any)} className="w-full p-5 bg-slate-900 text-white rounded-[1.5rem] border-none text-[11px] font-bold uppercase outline-none shadow-xl">
-                            <option value="force">Force Directed / 引力布局</option>
+                            <option value="fruchtermanReingold">Fruchterman-Reingold / 有机弹力</option>
+                            <option value="concentric">Concentric Centrality / 向心等级</option>
+                            <option value="force">Standard Force / 标准引力</option>
                             <option value="forceAtlas2">ForceAtlas2 / 力导向优化</option>
-                            <option value="radial">Radial Hubs / 径向布局</option>
-                            <option value="clustered">Clustered Roles / 聚类布局</option>
                         </select>
+                        <p className="text-[9px] text-slate-400 italic font-serif leading-relaxed px-2">
+                           Fruchterman-Reingold creates a balanced organic structure, while Concentric emphasizes PageRank importance.
+                           <br/>有机弹力布局平衡分布，向心等级布局强调节点声望。
+                        </p>
                     </section>
+                    
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Relationship Direction</h4>
+                        <div className="space-y-1">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Relationship Direction</h4>
+                          <h4 className="text-[10px] font-bold text-slate-300 serif">关系流转方向</h4>
+                        </div>
                         <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
                            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-tighter">{config.isDirected ? 'Directed / 有向' : 'Undirected / 无向'}</span>
                            <button onClick={() => setConfig({...config, isDirected: !config.isDirected})} className={`w-14 h-7 rounded-full transition-all relative ${config.isDirected ? 'bg-indigo-600 shadow-lg' : 'bg-slate-300'}`}>
@@ -445,8 +426,12 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                            </button>
                         </div>
                     </section>
+
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Participating Entities</h4>
+                        <div className="space-y-1">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Participating Entities</h4>
+                          <h4 className="text-[10px] font-bold text-slate-300 serif">参与可视化的实体</h4>
+                        </div>
                         <div className="flex flex-wrap gap-2.5">
                             {availableAttributes.map(attr => (
                                 <button key={attr.id} onClick={() => {
@@ -464,14 +449,39 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             {activeTab === 'viz' && (
                 <div className="space-y-10 animate-fadeIn">
                     <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Scale Nodes By</h4>
+                        <div className="space-y-1">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Label Management</h4>
+                          <h4 className="text-[10px] font-bold text-slate-300 serif">标签管理与冲突规避</h4>
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
+                               <span className="text-[11px] font-bold text-slate-600 uppercase tracking-tighter">Avoid Overlap / 规避重叠</span>
+                               <button onClick={() => setAvoidLabelOverlap(!avoidLabelOverlap)} className={`w-14 h-7 rounded-full transition-all relative ${avoidLabelOverlap ? 'bg-emerald-500 shadow-lg' : 'bg-slate-300'}`}>
+                                  <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${avoidLabelOverlap ? 'left-8' : 'left-1'}`}></div>
+                               </button>
+                            </div>
+                            <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
+                               <span className="text-[11px] font-bold text-slate-600 uppercase tracking-tighter">Show Annotations / 显示名称</span>
+                               <button onClick={() => setShowLabels(!showLabels)} className={`w-14 h-7 rounded-full transition-all relative ${showLabels ? 'bg-indigo-600 shadow-lg' : 'bg-slate-300'}`}>
+                                  <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${showLabels ? 'left-8' : 'left-1'}`}></div>
+                               </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="space-y-5">
+                        <div className="space-y-1">
+                          <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Scale Nodes By</h4>
+                          <h4 className="text-[10px] font-bold text-slate-300 serif">节点大小映射基准</h4>
+                        </div>
                         <select value={sizeBy} onChange={e => setSizeBy(e.target.value as any)} className="w-full p-5 bg-slate-50 rounded-[1.5rem] border-none text-[11px] font-bold uppercase outline-none shadow-inner text-indigo-600">
                            <option value="uniform">Uniform / 统一</option>
-                           <option value="degree">Degree Centrality / 度</option>
-                           <option value="betweenness">Betweenness / 介数</option>
-                           <option value="pageRank">PageRank / 声望</option>
+                           <option value="degree">Degree Centrality / 度中心性</option>
+                           <option value="betweenness">Betweenness / 介数中心性</option>
+                           <option value="pageRank">PageRank / 声望值</option>
                         </select>
                     </section>
+
                     <section className="space-y-5">
                         <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Size Bounds</h4>
                         <div className="grid grid-cols-2 gap-6">
@@ -483,15 +493,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                               <label className="text-[10px] font-black uppercase text-slate-300">Max: {maxSize}</label>
                               <input type="range" min="40" max="150" value={maxSize} onChange={e => setMaxSize(parseInt(e.target.value))} className="w-full accent-indigo-600" />
                            </div>
-                        </div>
-                    </section>
-                    <section className="space-y-5">
-                        <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Labels</h4>
-                        <div className="flex items-center justify-between p-5 bg-slate-50 rounded-[1.5rem]">
-                           <span className="text-[11px] font-bold text-slate-600 uppercase tracking-tighter">Show Annotations</span>
-                           <button onClick={() => setShowLabels(!showLabels)} className={`w-14 h-7 rounded-full transition-all relative ${showLabels ? 'bg-indigo-600 shadow-lg' : 'bg-slate-300'}`}>
-                              <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all ${showLabels ? 'left-8' : 'left-1'}`}></div>
-                           </button>
                         </div>
                     </section>
                 </div>

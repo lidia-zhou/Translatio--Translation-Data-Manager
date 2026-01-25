@@ -100,21 +100,31 @@ export const geocodeLocation = async (locationName: string): Promise<[number, nu
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Find the precise WGS84 Geographic Coordinates (Longitude and Latitude) for the following location: "${locationName}". 
-      Return only a JSON array of two numbers: [longitude, latitude]. 
-      Example for Beijing: [116.40, 39.90]. 
-      If the location is a province, return the coordinates of its capital city.`,
+      contents: `Find the precise WGS84 Geographic Coordinates (Longitude and Latitude) for the following location: "${locationName}".
+      
+      Instructions:
+      1. Return ONLY a JSON object with "lng" and "lat" keys.
+      2. Values must be numbers.
+      3. Example for Beijing: {"lng": 116.40, "lat": 39.90}.
+      4. If the name is ambiguous, choose the most historically relevant hub for translation publishing.`,
       config: { 
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.ARRAY,
-          items: { type: Type.NUMBER }
+          type: Type.OBJECT,
+          properties: {
+            lng: { type: Type.NUMBER },
+            lat: { type: Type.NUMBER }
+          },
+          required: ["lng", "lat"]
         }
       }
     });
     const result = JSON.parse(response.text || "null");
-    return Array.isArray(result) && result.length === 2 ? [result[0], result[1]] : null;
-  } catch (e) { return null; }
+    return result && typeof result.lng === 'number' ? [result.lng, result.lat] : null;
+  } catch (e) { 
+    console.error("Geocoding API error:", e);
+    return null; 
+  }
 };
 
 export const generateResearchBlueprint = async (prompt: string): Promise<ResearchBlueprint> => {
