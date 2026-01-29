@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { ResearchBlueprint, ResearchDimension } from '../types';
-import { generateResearchBlueprint } from '../services/geminiService';
+import { ResearchBlueprint } from '../types.ts';
+import { generateResearchBlueprint } from '../services/geminiService.ts';
 
 interface TheoryLabProps {
   onClose: () => void;
@@ -17,33 +17,53 @@ const DIMENSION_MAP: Record<string, { en: string, zh: string, icon: string }> = 
 };
 
 const getDimensionLabel = (dimName: string) => {
-  // Direct match
-  if (DIMENSION_MAP[dimName]) return DIMENSION_MAP[dimName];
-  
-  // Fuzzy match based on keywords
   const lower = dimName.toLowerCase();
   if (lower.includes('who') || lower.includes('agent')) return DIMENSION_MAP['Agentive (Who)'];
   if (lower.includes('what') || lower.includes('text')) return DIMENSION_MAP['Textual (What)'];
   if (lower.includes('where') || lower.includes('when') || lower.includes('how') || lower.includes('distrib')) return DIMENSION_MAP['Distributional (Where/When/How)'];
   if (lower.includes('why') || lower.includes('discurs')) return DIMENSION_MAP['Discursive (Why)'];
   if (lower.includes('recept') || lower.includes('so what') || lower.includes('impact')) return DIMENSION_MAP['Reception (So what)'];
-  
   return { en: dimName, zh: '扩展维度', icon: '🔬' };
 };
 
+// Offline fallback blueprints
+const LOCAL_BLUEPRINTS: Record<string, ResearchBlueprint> = {
+  "default": {
+    projectScope: "Translation Sociology Framework (Offline Mode)",
+    dimensions: [
+      { dimension: 'Agentive (Who)', coreQuestion: "Who are the key gatekeepers in this translation flow?", dataSources: ["Archival Notes", "Translator Bios"], dhMethods: ["SNA", "Prosopography"], relevance: 90 },
+      { dimension: 'Distributional (Where/When/How)', coreQuestion: "How did the text travel geographically?", dataSources: ["Shipping Records", "Library Catalogs"], dhMethods: ["GIS Mapping"], relevance: 85 }
+    ],
+    suggestedSchema: [
+      { fieldName: "Mediator Stance", description: "Political or cultural position of the translator", analyticalUtility: "Bourdieusian analysis", importance: 'Critical' }
+    ],
+    dataCleaningStrategy: "Standardize names using LCNAF and local name authorities.",
+    storageAdvice: "Local IndexedDB with periodic CSV exports.",
+    methodology: "A Bourdieusian approach to the sociology of translation.",
+    visualizationStrategy: "Interactive force-directed graphs for agency networks.",
+    collectionTips: "Prioritize paratextual evidence."
+  }
+};
+
 const TheoryLab: React.FC<TheoryLabProps> = ({ onClose, onApplyBlueprint }) => {
-  const [query, setQuery] = useState('19th sinologist translators\' scholarship');
+  const [query, setQuery] = useState('19th century missionary translations');
   const [isGenerating, setIsGenerating] = useState(false);
   const [blueprint, setBlueprint] = useState<ResearchBlueprint | null>(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   const handleGenerate = async () => {
     if (!query.trim()) return;
     setIsGenerating(true);
+    setIsOfflineMode(false);
+    
     try {
+      if (!process.env.API_KEY) throw new Error("Offline");
       const bp = await generateResearchBlueprint(query);
       setBlueprint(bp);
     } catch (e) {
-      alert("AI generation failed. Please check your API key.");
+      console.warn("Switching to Offline Lab Mode.");
+      setBlueprint(LOCAL_BLUEPRINTS.default);
+      setIsOfflineMode(true);
     } finally {
       setIsGenerating(false);
     }
@@ -57,7 +77,9 @@ const TheoryLab: React.FC<TheoryLabProps> = ({ onClose, onApplyBlueprint }) => {
           <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center text-white text-2xl shadow-xl">🔬</div>
           <div className="space-y-0.5">
             <h1 className="text-3xl font-bold text-slate-900 serif leading-none">TAD Lab</h1>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pt-1">Translation as Data framework application</p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pt-1">
+              {isOfflineMode ? 'Local Research Framework (Offline)' : 'AI Matrix Application'}
+            </p>
           </div>
         </div>
         <button onClick={onClose} className="text-5xl text-slate-200 hover:text-slate-900 transition-colors leading-none">&times;</button>
@@ -67,22 +89,22 @@ const TheoryLab: React.FC<TheoryLabProps> = ({ onClose, onApplyBlueprint }) => {
         <div className="max-w-[1400px] mx-auto bg-white rounded-[2.5rem] p-12 shadow-sm border border-slate-200 flex flex-col gap-10">
           <div className="space-y-4 text-left">
             <label className="block">
-              <span className="text-[11px] font-black uppercase text-slate-900 tracking-widest block">Research Inquiry / 研究课题</span>
+              <span className="text-[11px] font-black uppercase text-slate-900 tracking-widest block">Research Inquiry / 翻译研究课题</span>
             </label>
             <textarea 
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full h-32 bg-slate-50 border border-slate-100 rounded-[2rem] p-8 text-2xl font-serif italic text-slate-800 outline-none focus:ring-8 ring-indigo-50 transition-all resize-none shadow-inner"
-              placeholder="e.g., 'Retranslation of Camões in 20th Century China'..."
+              placeholder="例如：'20世纪女性译者在中外文学交流中的网络建构'..."
             />
           </div>
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-4">
             <button 
               onClick={handleGenerate}
               disabled={isGenerating || !query.trim()}
               className="px-16 py-6 bg-slate-900 hover:bg-emerald-600 disabled:bg-slate-300 text-white rounded-2xl text-[12px] font-black uppercase tracking-widest transition-all shadow-2xl active:scale-95"
             >
-              {isGenerating ? 'ANALYZING...' : 'PLAN TAD STRATEGY →'}
+              {isGenerating ? 'ANALYZING...' : 'Plan TAD Strategy →'}
             </button>
           </div>
         </div>
@@ -98,10 +120,16 @@ const TheoryLab: React.FC<TheoryLabProps> = ({ onClose, onApplyBlueprint }) => {
             {isGenerating ? (
                <div className="bg-white rounded-[4rem] p-32 border border-slate-200 flex flex-col items-center justify-center gap-8 shadow-sm">
                   <div className="w-16 h-16 border-4 border-slate-100 border-t-emerald-500 rounded-full animate-spin"></div>
-                  <p className="text-2xl font-serif italic text-slate-400">Constructing Dynamic Research Matrix...</p>
+                  <p className="text-2xl font-serif italic text-slate-400">Engineering Research Matrix...</p>
                </div>
             ) : (
               <div className="space-y-6">
+                {isOfflineMode && (
+                    <div className="bg-amber-50 border border-amber-200 p-6 rounded-3xl flex items-center gap-4">
+                        <span className="text-2xl">📡</span>
+                        <p className="text-[11px] font-bold text-amber-700 uppercase tracking-widest">Lab Offline Mode: Using Pre-installed Scholarly Templates / 已切换至离线蓝图库</p>
+                    </div>
+                )}
                 {blueprint?.dimensions.map((dim, idx) => {
                   const label = getDimensionLabel(dim.dimension);
                   return (

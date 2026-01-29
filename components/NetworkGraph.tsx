@@ -20,16 +20,19 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
+  // UI States
   const [activeTab, setActiveTab] = useState<'topology' | 'viz' | 'physics'>('topology');
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
+  // Algorithmic Config
   const [layout, setLayout] = useState<LayoutType>('force');
   const [sizeBy, setSizeBy] = useState<NodeSizeMetric>('degree');
   const [colorMode, setColorMode] = useState<ColorMode>('category');
   
+  // Physics Parameters (The Full Set)
   const [linkDistance, setLinkDistance] = useState(160);
   const [chargeStrength, setChargeStrength] = useState(-900);
   const [collisionRadius, setCollisionRadius] = useState(45);
@@ -129,7 +132,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     const g = svg.append("g");
 
     const zoom = d3.zoom<SVGSVGElement, any>()
-        .scaleExtent([0.05, 15])
+        .scaleExtent([0.05, 20])
         .on("zoom", (e) => g.attr("transform", e.transform));
     svg.call(zoom);
 
@@ -190,7 +193,8 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
           return hoveredNode ? (isRelated || d.id === hoveredNode ? 1 : 0.1) : 0.9;
       })
       .attr("stroke", (d: any) => d.id === hoveredNode ? "#4f46e5" : "white")
-      .attr("stroke-width", d => d.id === hoveredNode ? 4 : 2);
+      .attr("stroke-width", d => d.id === hoveredNode ? 4 : 2)
+      .attr("class", "transition-all duration-300");
 
     node.append("text")
       .attr("dy", d => getRadius(d) + 24)
@@ -222,7 +226,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
         const url = URL.createObjectURL(svgBlob);
         const link = document.createElement("a");
         link.href = url;
-        link.download = `tad-analysis-${Date.now()}.svg`;
+        link.download = `tad-network-${Date.now()}.svg`;
         link.click();
     } else {
         const canvas = document.createElement("canvas");
@@ -243,7 +247,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             const pngUrl = canvas.toDataURL("image/png");
             const link = document.createElement("a");
             link.href = pngUrl;
-            link.download = `tad-export-${Date.now()}.png`;
+            link.download = `tad-hq-export-${Date.now()}.png`;
             link.click();
             URL.revokeObjectURL(url);
         };
@@ -255,6 +259,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
     <div ref={containerRef} className="flex-1 w-full h-full bg-[#fdfdfe] relative flex overflow-hidden select-none font-sans">
       <svg ref={svgRef} className="w-full h-full cursor-grab active:cursor-grabbing" onClick={() => setSelectedNode(null)}></svg>
       
+      {/* Node detail panel */}
       {selectedNode && (
           <div className="absolute top-10 left-10 w-80 bg-white/95 backdrop-blur-3xl p-8 rounded-[2.5rem] shadow-3xl border border-slate-100 animate-slideUp z-[250] ring-1 ring-slate-100">
                <div className="flex justify-between items-start mb-6">
@@ -274,12 +279,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                       <p className="text-xl font-bold serif text-indigo-600">{selectedNode.pageRank.toFixed(4)}</p>
                   </div>
                </div>
-               <p className="mt-6 text-[11px] text-slate-400 italic font-serif leading-relaxed px-2">
-                 此节点在翻译网络中作为核心中介参与了 {selectedNode.degree} 次文献产出或跨国流转活动。
-               </p>
           </div>
       )}
 
+      {/* Floating Action Bar */}
       <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-white/80 backdrop-blur-3xl p-3 rounded-[2rem] shadow-3xl border border-slate-100 z-[100] ring-1 ring-white/20">
           <button onClick={() => handleExport('png')} className="px-8 py-3.5 bg-slate-900 text-white rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-indigo-600 transition-all flex items-center gap-2"><span>🖼️</span> Export PNG</button>
           <button onClick={() => handleExport('svg')} className="px-8 py-3.5 bg-white text-slate-400 border border-slate-100 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest hover:text-slate-900 transition-all">Vector SVG</button>
@@ -363,6 +366,10 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
                                 <div className="flex justify-between text-[10px] font-bold uppercase"><span>Repulsion</span><span className="text-indigo-600">{chargeStrength}</span></div>
                                 <input type="range" min="-4000" max="-100" value={chargeStrength} onChange={e => setChargeStrength(Number(e.target.value))} className="w-full h-1 bg-slate-100 rounded-full appearance-none accent-indigo-600" />
                             </div>
+                            <div className="space-y-3">
+                                <div className="flex justify-between text-[10px] font-bold uppercase"><span>Collision Radius</span><span className="text-indigo-600">{collisionRadius}px</span></div>
+                                <input type="range" min="0" max="150" value={collisionRadius} onChange={e => setCollisionRadius(Number(e.target.value))} className="w-full h-1 bg-slate-100 rounded-full appearance-none accent-indigo-600" />
+                            </div>
                         </div>
                     </section>
                     <button onClick={() => { setLinkDistance(160); setChargeStrength(-900); setCollisionRadius(45); setCenterForce(0.12); }} className="w-full py-4 text-[9px] font-black uppercase text-slate-300 hover:text-slate-900 bg-slate-50 border border-slate-100 rounded-2xl transition-all">Reset Simulation</button>
@@ -370,7 +377,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ data, customColumns }) => {
             )}
         </div>
 
-        <div className="p-8 bg-indigo-600">
+        <div className="p-8 bg-indigo-600 mt-auto">
              <div className="flex items-center gap-4 mb-3">
                 <span className="text-2xl">💡</span>
                 <p className="text-[10px] font-black uppercase text-indigo-50 tracking-widest leading-tight">Scholar's Insight</p>
